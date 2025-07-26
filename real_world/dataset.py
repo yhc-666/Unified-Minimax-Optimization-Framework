@@ -5,7 +5,7 @@ import os
 import pdb
 
 
-data_dir = "./data"
+data_dir = "./real_world/data"
 
 def load_data(name="coat"):
 

@@ -3,7 +3,14 @@
     "allow": [
       "Bash(find:*)",
       "Bash(cd:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(cd:*)",
+      "Bash(cd:*)",
+      "Bash(cd:*)",
+      "Bash(cd:*)",
+      "Bash(cd:*)",
+      "Bash(grep:*)",
+      "Bash(cd:*)"
     ],
     "deny": []
   }
