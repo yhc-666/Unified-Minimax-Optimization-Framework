@@ -417,8 +417,8 @@ class MF_Minimax(nn.Module):
 
 def train_and_eval(dataset_name, train_args, model_args):
     
-    top_k_list = [5]
-    top_k_names = ("precision_5", "recall_5", "ndcg_5", "f1_5")
+    top_k_list = [5, 10]
+    top_k_names = ("precision_5", "recall_5", "ndcg_5", "f1_5", "precision_10", "recall_10", "ndcg_10", "f1_10")
     if dataset_name == "coat":
         train_mat, test_mat = load_data("coat")        
         x_train, y_train = rating_mat_to_sample(train_mat)
@@ -436,8 +436,8 @@ def train_and_eval(dataset_name, train_args, model_args):
         x_train, y_train, x_test, y_test = load_data("kuai")
         num_user = x_train[:,0].max() + 1
         num_item = x_train[:,1].max() + 1
-        top_k_list = [50]
-        top_k_names = ("precision_50", "recall_50", "ndcg_50", "f1_50")
+        top_k_list = [50, 100]
+        top_k_names = ("precision_50", "recall_50", "ndcg_50", "f1_50", "precision_100", "recall_100", "ndcg_100", "f1_100")
 
     np.random.seed(2020)
     torch.manual_seed(2020)
@@ -488,19 +488,28 @@ def train_and_eval(dataset_name, train_args, model_args):
     mae_mf = mae_func(y_test, test_pred)
     precisions = precision_func(mf, x_test, y_test, top_k_list)
     recalls = recall_func(mf, x_test, y_test, top_k_list)
-    f1 = 2 / (1 / np.mean(precisions[top_k_names[0]]) + 1 / np.mean(recalls[top_k_names[1]]))
 
     print("***"*5 + "[Minimax]" + "***"*5)
     print("[Minimax] test mse:", mse_mf)
     print("[Minimax] test mae:", mae_mf)
     print("[Minimax] test auc:", auc)
-    print("[Minimax] {}:{:.6f}".format(
-            top_k_names[2].replace("_", "@"), np.mean(ndcgs[top_k_names[2]])))
-    print("[Minimax] {}:{:.6f}".format(top_k_names[3].replace("_", "@"), f1))
-    print("[Minimax] {}:{:.6f}".format(
-            top_k_names[0].replace("_", "@"), np.mean(precisions[top_k_names[0]])))
-    print("[Minimax] {}:{:.6f}".format(
-            top_k_names[1].replace("_", "@"), np.mean(recalls[top_k_names[1]])))
+    
+    # Print results for each k value
+    for k in top_k_list:
+        precision_key = f"precision_{k}"
+        recall_key = f"recall_{k}"
+        ndcg_key = f"ndcg_{k}"
+        
+        f1_k = 2 / (1 / np.mean(precisions[precision_key]) + 1 / np.mean(recalls[recall_key]))
+        
+        print("[Minimax] {}:{:.6f}".format(
+                ndcg_key.replace("_", "@"), np.mean(ndcgs[ndcg_key])))
+        print("[Minimax] {}:{:.6f}".format(f"f1@{k}", f1_k))
+        print("[Minimax] {}:{:.6f}".format(
+                precision_key.replace("_", "@"), np.mean(precisions[precision_key])))
+        print("[Minimax] {}:{:.6f}".format(
+                recall_key.replace("_", "@"), np.mean(recalls[recall_key])))
+    
     user_wise_ctr = get_user_wise_ctr(x_test,y_test,test_pred)
     gi,gu = gini_index(user_wise_ctr)
     print("***"*5 + "[Minimax]" + "***"*5)

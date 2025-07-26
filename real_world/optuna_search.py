@@ -46,36 +46,36 @@ HYPERPARAM_RANGES = {
         'abc_model_name': ['logistic_regression', 'mlp']
     },
     'yahoo': {
-        'embedding_k': [8, 16, 32],
-        'embedding_k1': [8, 16, 32],
+        'embedding_k': [4, 8, 16, 32, 64, 256],
+        'embedding_k1': [4, 8, 16, 32, 64, 256],
         'pred_lr': (0.005, 0.05),
         'impu_lr': (0.005, 0.05),
         'prop_lr': (0.005, 0.05),
         'dis_lr': (0.005, 0.05),
-        'lamb_pred': (1e-6, 1e-3),
-        'lamb_imp': (1e-3, 1.0),
-        'lamb_prop': (1e-4, 1e-2),
-        'dis_lamb': (0.0, 1e-3),
-        'gamma': (0.01, 0.1),
-        'beta': (1e-6, 1e-3),
+        'lamb_pred': (1e-7, 10),
+        'lamb_imp': (1e-7, 10),
+        'lamb_prop': (1e-7, 10),
+        'dis_lamb': (1e-7, 10),
+        'gamma': (0.01, 0.2),
+        'beta': (1e-6, 10),
         'G': [2, 4, 6, 8],
         'num_bins': [5, 10, 15, 20],
         'batch_size': [2048, 4096, 8192],
         'abc_model_name': ['logistic_regression', 'mlp']
     },
     'kuai': {
-        'embedding_k': [8, 16, 32],
-        'embedding_k1': [8, 16, 32],
+        'embedding_k': [4, 8, 16, 32, 64, 256],
+        'embedding_k1': [4, 8, 16, 32, 64, 256],
         'pred_lr': (0.005, 0.05),
         'impu_lr': (0.005, 0.05),
         'prop_lr': (0.005, 0.05),
         'dis_lr': (0.005, 0.05),
-        'lamb_pred': (1e-6, 1e-3),
-        'lamb_imp': (1e-3, 0.1),
-        'lamb_prop': (1e-3, 0.1),
-        'dis_lamb': (0.0, 1e-3),
-        'gamma': (0.01, 0.1),
-        'beta': (1e-6, 1e-3),
+        'lamb_pred': (1e-7, 10),
+        'lamb_imp': (1e-7, 10),
+        'lamb_prop': (1e-7, 10),
+        'dis_lamb': (1e-7, 10),
+        'gamma': (0.01, 0.2),
+        'beta': (1e-6, 10),
         'G': [2, 4, 6, 8],
         'num_bins': [5, 10, 15, 20],
         'batch_size': [2048, 4096, 8192],
@@ -87,8 +87,7 @@ def train_and_eval_with_params(dataset_name, train_args, model_args):
     """Train and evaluate model with given hyperparameters"""
     
     # Set up data based on dataset
-    top_k_list = [5]
-    top_k_names = ("precision_5", "recall_5", "ndcg_5", "f1_5")
+    top_k_list = [5, 10]
     
     if dataset_name == "coat":
         train_mat, test_mat = load_data("coat")        
@@ -107,8 +106,7 @@ def train_and_eval_with_params(dataset_name, train_args, model_args):
         x_train, y_train, x_test, y_test = load_data("kuai")
         num_user = x_train[:,0].max() + 1
         num_item = x_train[:,1].max() + 1
-        top_k_list = [50]
-        top_k_names = ("precision_50", "recall_50", "ndcg_50", "f1_50")
+        top_k_list = [50, 100]
 
     # Binarize ratings
     if dataset_name == "kuai":
@@ -161,22 +159,38 @@ def train_and_eval_with_params(dataset_name, train_args, model_args):
     precisions = precision_func(mf, x_test, y_test, top_k_list)
     recalls = recall_func(mf, x_test, y_test, top_k_list)
     
-    # Calculate F1
-    f1 = 2 / (1 / np.mean(precisions[top_k_names[0]]) + 1 / np.mean(recalls[top_k_names[1]]))
-    
-    return {
+    # Build results dictionary with all metrics
+    results = {
         'mse': mse,
         'mae': mae,
         'auc': auc,
-        'ndcg': np.mean(ndcgs[top_k_names[2]]),
-        'precision': np.mean(precisions[top_k_names[0]]),
-        'recall': np.mean(recalls[top_k_names[1]]),
-        'f1': f1
     }
+    
+    # Add metrics for each k value
+    for k in top_k_list:
+        precision_key = f"precision_{k}"
+        recall_key = f"recall_{k}"
+        ndcg_key = f"ndcg_{k}"
+        
+        # Calculate F1 for this k
+        f1_k = 2 / (1 / np.mean(precisions[precision_key]) + 1 / np.mean(recalls[recall_key]))
+        
+        results[f'ndcg_{k}'] = np.mean(ndcgs[ndcg_key])
+        results[f'precision_{k}'] = np.mean(precisions[precision_key])
+        results[f'recall_{k}'] = np.mean(recalls[recall_key])
+        results[f'f1_{k}'] = f1_k
+    
+    # For backward compatibility, also include the first k value without suffix
+    results['ndcg'] = results[f'ndcg_{top_k_list[0]}']
+    results['precision'] = results[f'precision_{top_k_list[0]}']
+    results['recall'] = results[f'recall_{top_k_list[0]}']
+    results['f1'] = results[f'f1_{top_k_list[0]}']
+    
+    return results
 
 
 def objective(trial, args):
-    """Optuna objective function"""
+    """Optuna objective function for multi-objective optimization"""
     
     # Get hyperparameter ranges for the dataset
     ranges = HYPERPARAM_RANGES[args.dataset]
@@ -223,17 +237,27 @@ def objective(trial, args):
         if args.save_all_trials:
             save_trial_to_csv(trial, results, args)
         
-        # Return the metric to optimize
-        return results[args.metric]
+        # Return tuple of metrics to optimize
+        objective_values = []
+        for metric in args.metrics:
+            objective_values.append(results[metric])
+        
+        return tuple(objective_values)
         
     except Exception as e:
         print(f"Trial failed with error: {e}")
-        return float('-inf') if args.direction == 'maximize' else float('inf')
+        # Return worst values for each objective
+        worst_values = []
+        for i, direction in enumerate(args.directions):
+            worst_values.append(float('-inf') if direction == 'maximize' else float('inf'))
+        return tuple(worst_values)
 
 
 def save_trial_to_csv(trial, results, args):
     """Save trial results to CSV file"""
-    csv_path = os.path.join(args.output_dir, f'{args.dataset}_trials.csv')
+    dataset_output_dir = os.path.join(args.output_dir, args.dataset)
+    os.makedirs(dataset_output_dir, exist_ok=True)
+    csv_path = os.path.join(dataset_output_dir, f'{args.dataset}_all_trials.csv')
     
     # Prepare row data
     row_data = {
@@ -243,6 +267,11 @@ def save_trial_to_csv(trial, results, args):
         **results,
         'training_time': trial.user_attrs.get('training_time', -1)
     }
+    
+    # Add objective values for multi-objective optimization
+    if hasattr(trial, 'values') and trial.values is not None:
+        for i, (metric, value) in enumerate(zip(args.metrics, trial.values)):
+            row_data[f'objective_{metric}'] = value
     
     # Write header if file doesn't exist
     file_exists = os.path.exists(csv_path)
@@ -261,12 +290,16 @@ def parse_args():
                         help='Dataset to use')
     parser.add_argument('--n_trials', type=int, default=100,
                         help='Number of optuna trials')
-    parser.add_argument('--metric', type=str, default='auc',
-                        choices=['auc', 'ndcg', 'recall', 'f1', 'mse'],
-                        help='Metric to optimize')
-    parser.add_argument('--direction', type=str, default='maximize',
+    parser.add_argument('--metrics', type=str, nargs='+', default=['auc'],
+                        choices=['auc', 'ndcg', 'recall', 'f1', 'mse', 'mae', 'precision',
+                                 'ndcg_5', 'ndcg_10', 'ndcg_50', 'ndcg_100',
+                                 'precision_5', 'precision_10', 'precision_50', 'precision_100',
+                                 'recall_5', 'recall_10', 'recall_50', 'recall_100',
+                                 'f1_5', 'f1_10', 'f1_50', 'f1_100'],
+                        help='Metrics to optimize (can specify multiple)')
+    parser.add_argument('--directions', type=str, nargs='+', default=['maximize'],
                         choices=['maximize', 'minimize'],
-                        help='Optimization direction')
+                        help='Optimization directions for each metric')
     parser.add_argument('--output_dir', type=str, default='./optuna_results',
                         help='Directory for saving results')
     parser.add_argument('--seed', type=int, default=2020,
@@ -278,7 +311,13 @@ def parse_args():
     parser.add_argument('--storage', type=str, default=None,
                         help='Database URL for distributed optimization')
     
-    return parser.parse_args()
+    args = parser.parse_args()
+    
+    # Validate that metrics and directions have the same length
+    if len(args.metrics) != len(args.directions):
+        parser.error(f"Number of metrics ({len(args.metrics)}) must match number of directions ({len(args.directions)})")
+    
+    return args
 
 
 def main():
@@ -291,20 +330,21 @@ def main():
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
     
-    # Adjust direction based on metric
-    if args.metric == 'mse':
-        args.direction = 'minimize'
+    # Create subdirectory for this dataset
+    dataset_output_dir = os.path.join(args.output_dir, args.dataset)
+    os.makedirs(dataset_output_dir, exist_ok=True)
     
     # Create study name
     if args.study_name is None:
-        args.study_name = f'{args.dataset}_{args.metric}_{time.strftime("%Y%m%d_%H%M%S")}'
+        metrics_str = '_'.join(args.metrics)
+        args.study_name = f'{args.dataset}_{metrics_str}_{time.strftime("%Y%m%d_%H%M%S")}'
     
-    # Create optuna study
+    # Create optuna study for multi-objective optimization
     if args.storage:
         # For distributed optimization
         study = create_study(
             study_name=args.study_name,
-            direction=args.direction,
+            directions=args.directions,
             storage=args.storage,
             load_if_exists=True,
             sampler=TPESampler(seed=args.seed)
@@ -313,51 +353,90 @@ def main():
         # Local optimization
         study = create_study(
             study_name=args.study_name,
-            direction=args.direction,
+            directions=args.directions,
             sampler=TPESampler(seed=args.seed)
         )
     
     # Run optimization
-    print(f"Starting hyperparameter search for {args.dataset} dataset")
-    print(f"Optimizing {args.metric} ({args.direction})")
+    print(f"Starting multi-objective hyperparameter search for {args.dataset} dataset")
+    print(f"Optimizing metrics: {', '.join([f'{m} ({d})' for m, d in zip(args.metrics, args.directions)])}")
     print(f"Running {args.n_trials} trials...")
     
     study.optimize(lambda trial: objective(trial, args), n_trials=args.n_trials)
     
+    # Get Pareto optimal trials
+    pareto_trials = study.best_trials
+    
     # Print results
     print("\n" + "="*50)
-    print("Best trial:")
-    print(f"Value ({args.metric}): {study.best_value:.6f}")
-    print("\nBest parameters:")
-    for key, value in study.best_params.items():
-        print(f"  {key}: {value}")
+    print(f"Found {len(pareto_trials)} Pareto optimal solutions")
     
-    # Save best parameters
-    best_params_path = os.path.join(args.output_dir, f'{args.dataset}_best_params.csv')
-    with open(best_params_path, 'w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=['parameter', 'value'])
-        writer.writeheader()
-        for key, value in study.best_params.items():
-            writer.writerow({'parameter': key, 'value': value})
+    # Save Pareto optimal parameters
+    pareto_params_path = os.path.join(dataset_output_dir, f'{args.dataset}_pareto_optimal_params.csv')
+    with open(pareto_params_path, 'w', newline='') as f:
+        if pareto_trials:
+            # Prepare fieldnames
+            fieldnames = ['trial_number', 'pareto_rank']
+            fieldnames.extend(args.metrics)
+            fieldnames.extend(sorted(pareto_trials[0].params.keys()))
+            
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            
+            for idx, trial in enumerate(pareto_trials):
+                row = {
+                    'trial_number': trial.number,
+                    'pareto_rank': idx + 1
+                }
+                # Add metric values
+                for i, metric in enumerate(args.metrics):
+                    row[metric] = trial.values[i]
+                # Add parameters
+                row.update(trial.params)
+                writer.writerow(row)
     
     # Save study summary
-    summary_path = os.path.join(args.output_dir, f'{args.dataset}_summary.txt')
+    summary_path = os.path.join(dataset_output_dir, f'{args.dataset}_summary.txt')
     with open(summary_path, 'w') as f:
         f.write(f"Dataset: {args.dataset}\n")
-        f.write(f"Metric: {args.metric} ({args.direction})\n")
+        f.write(f"Metrics: {', '.join([f'{m} ({d})' for m, d in zip(args.metrics, args.directions)])}\n")
         f.write(f"Number of trials: {args.n_trials}\n")
-        f.write(f"Best value: {study.best_value:.6f}\n")
-        f.write(f"\nBest parameters:\n")
-        for key, value in study.best_params.items():
-            f.write(f"  {key}: {value}\n")
+        f.write(f"Number of Pareto optimal solutions: {len(pareto_trials)}\n\n")
         
-        # Add all metrics from best trial
-        best_trial = study.best_trial
-        f.write(f"\nAll metrics from best trial:\n")
-        for key, value in best_trial.user_attrs.items():
-            f.write(f"  {key}: {value:.6f}\n")
+        if pareto_trials:
+            f.write("="*60 + "\n")
+            f.write("PARETO OPTIMAL SOLUTIONS\n")
+            f.write("="*60 + "\n\n")
+            
+            for idx, trial in enumerate(pareto_trials[:10]):  # Show top 10
+                f.write(f"Pareto Solution #{idx+1} (Trial {trial.number}):\n")
+                f.write("-"*40 + "\n")
+                
+                # Write objective values
+                f.write("Objective values:\n")
+                for i, (metric, value) in enumerate(zip(args.metrics, trial.values)):
+                    f.write(f"  {metric}: {value:.6f}\n")
+                
+                # Write all metrics
+                f.write("\nAll metrics:\n")
+                for key, value in trial.user_attrs.items():
+                    if isinstance(value, float):
+                        f.write(f"  {key}: {value:.6f}\n")
+                    else:
+                        f.write(f"  {key}: {value}\n")
+                
+                # Write parameters
+                f.write("\nParameters:\n")
+                for key, value in trial.params.items():
+                    f.write(f"  {key}: {value}\n")
+                f.write("\n")
+            
+            if len(pareto_trials) > 10:
+                f.write(f"... and {len(pareto_trials) - 10} more Pareto optimal solutions\n")
     
-    print(f"\nResults saved to {args.output_dir}")
+    print(f"\nResults saved to {dataset_output_dir}")
+    print(f"Pareto optimal parameters saved to: {pareto_params_path}")
+    print(f"Summary saved to: {summary_path}")
 
 
 if __name__ == '__main__':
