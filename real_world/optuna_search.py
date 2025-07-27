@@ -12,7 +12,7 @@ import argparse
 import numpy as np
 import torch
 from sklearn.metrics import roc_auc_score
-from Minimax import MF_Minimax
+from matrix_factorization_DT import MF_Minimax
 from dataset import load_data
 from utils import ndcg_func, recall_func, precision_func, rating_mat_to_sample, binarize, shuffle
 from matrix_factorization_DT import generate_total_sample

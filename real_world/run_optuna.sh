@@ -7,7 +7,7 @@ python real_world/optuna_search.py \
     --dataset coat \
     --metrics auc \
     --directions maximize \
-    --n_trials 100 \
+    --n_trials 2 \
     --save_all_trials
 
 python real_world/optuna_search.py \

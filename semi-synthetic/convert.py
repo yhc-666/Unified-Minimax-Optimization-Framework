@@ -17,11 +17,11 @@ total_num = prediction.shape[0]
 index = np.argsort(prediction)
 index_inverse = np.argsort(index)
 prediction = prediction[index]
-prediction[:int(total_num*0.53)] = 0
-prediction[int(total_num*0.53):int(total_num*0.77)] = 0
-prediction[int(total_num*0.77):int(total_num*0.91)] = 1
-prediction[int(total_num*0.91):int(total_num*0.98)] = 1
-prediction[int(total_num*0.98):] = 1
+prediction[:int(total_num*0.53)] = 0.1
+prediction[int(total_num*0.53):int(total_num*0.77)] = 0.3
+prediction[int(total_num*0.77):int(total_num*0.91)] = 0.5
+prediction[int(total_num*0.91):int(total_num*0.98)] = 0.7
+prediction[int(total_num*0.98):] = 0.9
 ground_truth = prediction[index_inverse]
 print(ground_truth[:20])
 
