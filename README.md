@@ -1,42 +1,53 @@
-# This is the code for the ICDE paper "Uncovering the Limitations of Eliminating Selection Bias for Recommendation: Missing Mechanisms, Disentanglement, and Identifiability".
-## Environment Requirement
+cd /home/ubuntu/Virginia/Unified-Minimax-Optimization-Framework && nohup ./real_world/run_optuna.sh > optuna_experiment.log 2>&1 &
 
-The code runs well at python 3.8.10. The required packages are as follows:
 
-- pytorch == 1.9.1 + cu111
-- numpy == 1.21.5
-- scipy == 1.7.3
-- pandas == 1.5.0
-- cppimport == 22.8.2
 
-## Datasets
 
-We use three public datasets (KuaiRec, Yahoo!R3 and Coat) for real-world experiments and ML-100K dataset (which named u.data in the semi-synthetic/data folder) for semi-synthetic experiments. 
+Based on my analysis, here are the safe batch sizes for each dataset:
 
-## Run the Code for semi-synthetic experiments
-Step 1: Run the complete.ipynb file to recover the whole rating matrix
-Step 2: Run the convert.ipynb file to generate propensities and adjust conversion rates.
-Step 3: Run the synthetic_final.ipynb file to get the results for varying data sparsity.
+  Dataset Dimensions:
 
-## Run the Code for real-world experiments
+  - Coat: 290 users × 300 items = 87,000 total pairs
+  - Yahoo: 15,401 users × 1,000 items = 15,401,000 total pairs
+  - Kuai: 7,163 users × 10,596 items = 75,900,948 total pairs
 
-- For dataset KuaiRec:
+  Safe Batch Size Calculation:
 
-```shell
-python DT-DR.py --dataset kuai
-python DT-IPS.py --dataset kuai
-```
+  Since the code uses x_all_idx = 
+  ul_idxs[G*idx*self.batch_size:G*(idx+1)*self.batch_size] where G=4 by
+   default, the constraint is:
 
-- For dataset Yahoo!R3:
+  max_batch_size < (num_users × num_items) / G
 
-```shell
-python DT-DR.py --dataset yahoo
-python DT-IPS.py --dataset yahoo
-```
+  Safe Batch Sizes:
 
-- For dataset Coat:
+  1. Coat Dataset
 
-```shell
-python DT-DR.py --dataset coat
-python DT-IPS.py --dataset coat
-```
+  - Maximum safe batch size: 21,750
+  - Recommended: ≤ 20,000 (with safety margin)
+  - Currently used: 128 (very safe)
+
+  2. Yahoo Dataset
+
+  - Maximum safe batch size: 3,850,250
+  - Recommended: ≤ 3,000,000 (with safety margin)
+  - Currently used: 4,096 (very safe)
+
+  3. Kuai Dataset
+
+  - Maximum safe batch size: 18,975,237
+  - Recommended: ≤ 15,000,000 (with safety margin)
+  - Currently used: 4,096 (very safe)
+
+  Additional Considerations:
+
+  1. Memory constraints: Even if mathematically safe, very large batch
+  sizes may cause GPU/CPU memory issues
+  2. Training stability: Extremely large batches can hurt convergence
+  3. Practical recommendations:
+    - Coat: Stay below 10,000
+    - Yahoo: Stay below 100,000
+    - Kuai: Stay below 100,000
+
+  The current batch sizes (128-4096) are well within safe limits for
+  all datasets.

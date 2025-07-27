@@ -1,141 +1,50 @@
 Dataset: coat
-Metrics: auc (maximize), mse (minimize), ndcg_5 (maximize), ndcg_10 (maximize)
-Number of trials: 3
-Number of Pareto optimal solutions: 3
+Metrics: auc (maximize)
+Number of trials: 100
+Number of Pareto optimal solutions: 1
 
 ============================================================
 PARETO OPTIMAL SOLUTIONS
 ============================================================
 
-Pareto Solution #1 (Trial 0):
+Pareto Solution #1 (Trial 76):
 ----------------------------------------
 Objective values:
-  auc: 0.500000
-  mse: 0.250000
-  ndcg_5: 0.446606
-  ndcg_10: 0.546202
+  auc: 0.730242
 
 All metrics:
-  mse: 0.250000
-  mae: 0.500000
-  auc: 0.500000
-  ndcg_5: 0.446606
-  precision_5: 0.380690
-  recall_5: 0.303651
-  f1_5: 0.337834
-  ndcg_10: 0.546202
-  precision_10: 0.393448
-  recall_10: 0.608031
-  f1_10: 0.477751
-  ndcg: 0.446606
-  precision: 0.380690
-  recall: 0.303651
-  f1: 0.337834
-  training_time: 8.689464
+  mse: 0.228128
+  mae: 0.473240
+  auc: 0.730242
+  ndcg_5: 0.652532
+  precision_5: 0.526897
+  recall_5: 0.448142
+  f1_5: 0.484339
+  ndcg_10: 0.710455
+  precision_10: 0.450690
+  recall_10: 0.711860
+  f1_10: 0.551938
+  ndcg: 0.652532
+  precision: 0.526897
+  recall: 0.448142
+  f1: 0.484339
+  training_time: 33.362418
 
 Parameters:
-  batch_size: 64
-  gamma: 0.061648785713594396
+  batch_size: 128
+  gamma: 0.15932876957917627
   G: 8
-  beta: 0.5300512596323975
-  num_bins: 15
-  embedding_k: 16
-  embedding_k1: 8
-  pred_lr: 0.006240512779176942
-  impu_lr: 0.009680905314039638
-  prop_lr: 0.005499440637019753
-  dis_lr: 0.007419598870293444
-  lamb_pred: 6.387396314689671
-  lamb_imp: 0.001063987406650601
-  lamb_prop: 0.021943891597065175
-  dis_lamb: 0.34191507672475274
+  beta: 0.011418606867869411
+  num_bins: 20
+  embedding_k: 4
+  embedding_k1: 4
+  pred_lr: 0.007455662062338013
+  impu_lr: 0.008316221005911154
+  prop_lr: 0.007053746106544987
+  dis_lr: 0.007661762463292656
+  lamb_pred: 0.0003413544617833328
+  lamb_imp: 0.002973588212948407
+  lamb_prop: 0.00014783754099768187
+  dis_lamb: 7.718721829297421
   abc_model_name: logistic_regression
-
-Pareto Solution #2 (Trial 1):
-----------------------------------------
-Objective values:
-  auc: 0.505948
-  mse: 0.250210
-  ndcg_5: 0.457823
-  ndcg_10: 0.557993
-
-All metrics:
-  mse: 0.250210
-  mae: 0.500135
-  auc: 0.505948
-  ndcg_5: 0.457823
-  precision_5: 0.403448
-  recall_5: 0.296728
-  f1_5: 0.341955
-  ndcg_10: 0.557993
-  precision_10: 0.408276
-  recall_10: 0.615684
-  f1_10: 0.490974
-  ndcg: 0.457823
-  precision: 0.403448
-  recall: 0.296728
-  f1: 0.341955
-  training_time: 3.727589
-
-Parameters:
-  batch_size: 256
-  gamma: 0.08094481395760472
-  G: 4
-  beta: 0.2171201116670227
-  num_bins: 10
-  embedding_k: 8
-  embedding_k1: 8
-  pred_lr: 0.0057114490123577446
-  impu_lr: 0.006715915496350151
-  prop_lr: 0.007137151034448486
-  dis_lr: 0.006026438623078573
-  lamb_pred: 0.00619669540990506
-  lamb_imp: 5.772867120550046e-06
-  lamb_prop: 2.552113327420776e-05
-  dis_lamb: 0.48394493578469583
-  abc_model_name: mlp
-
-Pareto Solution #3 (Trial 2):
-----------------------------------------
-Objective values:
-  auc: 0.647127
-  mse: 0.313005
-  ndcg_5: 0.621781
-  ndcg_10: 0.681779
-
-All metrics:
-  mse: 0.313005
-  mae: 0.408216
-  auc: 0.647127
-  ndcg_5: 0.621781
-  precision_5: 0.506897
-  recall_5: 0.433964
-  f1_5: 0.467604
-  ndcg_10: 0.681779
-  precision_10: 0.441724
-  recall_10: 0.692336
-  f1_10: 0.539339
-  ndcg: 0.621781
-  precision: 0.506897
-  recall: 0.433964
-  f1: 0.467604
-  training_time: 19.949335
-
-Parameters:
-  batch_size: 64
-  gamma: 0.1358625760945217
-  G: 2
-  beta: 0.6145627137801639
-  num_bins: 15
-  embedding_k: 8
-  embedding_k1: 16
-  pred_lr: 0.008803853309056562
-  impu_lr: 0.005277264633650254
-  prop_lr: 0.005488991189709023
-  dis_lr: 0.007456384268018913
-  lamb_pred: 2.6195638827653823e-06
-  lamb_imp: 9.029622567505722
-  lamb_prop: 8.689583096152716e-07
-  dis_lamb: 8.408448343849454
-  abc_model_name: mlp
 

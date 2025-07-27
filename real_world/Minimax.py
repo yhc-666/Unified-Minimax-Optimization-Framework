@@ -6,6 +6,7 @@ from sklearn.metrics import roc_auc_score
 import torch.nn as nn
 import torch.nn.functional as F
 import arguments
+from tqdm import tqdm
 
 from dataset import load_data
 from matrix_factorization_DT import generate_total_sample
@@ -194,7 +195,7 @@ class MF_Minimax(nn.Module):
         self.xent_func = torch.nn.BCELoss()
 
     def _compute_IPS(self, x, num_epoch=1000, lr=0.05, lamb=0, tol=1e-4, verbose=False):
-        print('_compute_IPS', lr, lamb)
+        print('Stage1: computing_IPS', lr, lamb)
         
         # Generate obs from x
         obs = sps.csr_matrix((np.ones(x.shape[0]), (x[:, 0], x[:, 1])), 
@@ -210,7 +211,7 @@ class MF_Minimax(nn.Module):
         early_stop = 0
         stop = 5  # Default stop value
 
-        for epoch in range(num_epoch):
+        for epoch in tqdm(range(num_epoch), desc="Computing IPS", disable=not verbose):
             ul_idxs = np.arange(x_all.shape[0])
             np.random.shuffle(ul_idxs)
 
@@ -277,7 +278,7 @@ class MF_Minimax(nn.Module):
             verbose: Whether to print training progress
         """ 
         
-        print('fit', G, alpha, beta, theta, gamma, num_bins, pred_lr, impu_lr, prop_lr, dis_lr, lamb_prop, lamb_pred, lamb_imp, dis_lamb)
+        print('Stage2: fitting', G, alpha, beta, theta, gamma, num_bins, pred_lr, impu_lr, prop_lr, dis_lr, lamb_prop, lamb_pred, lamb_imp, dis_lamb)
         
         # Create optimizers with separate learning rates and weight decays
         optimizer_prediction = torch.optim.Adam(self.model_pred.parameters(), lr=pred_lr, weight_decay=lamb_pred)
@@ -301,7 +302,7 @@ class MF_Minimax(nn.Module):
         bin_edges = torch.linspace(0, 1, steps=num_bins + 1, device=self.device)[1:-1]
         print('bin_edges', bin_edges)
         
-        for epoch in range(num_epoch):
+        for epoch in tqdm(range(num_epoch), desc="Training Minimax", disable=not verbose):
             all_idx = np.arange(num_samples)
             np.random.shuffle(all_idx)
             ul_idxs = np.arange(x_all.shape[0])
@@ -572,7 +573,7 @@ def para(args):
     elif args.dataset=="kuai":
         args.train_args = {
             "batch_size": 4096,             # Large batch for efficient training
-            "batch_size_prop": 4096,        # Same as main batch size
+            "batch_size_prop": 32764,        # Same as main batch size
             "gamma": 0.05,                  # Standard propensity clipping
             "G": 4,                         # Standard exploration ratio
             "alpha": 0.5,                   # Unused parameter
@@ -605,4 +606,4 @@ if __name__ == "__main__":
     train_and_eval(args.dataset, args.train_args, args.model_args)
 
 
-# python Minimax.py --dataset coat
+# python real_world/Minimax.py --dataset kuai
