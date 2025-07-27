@@ -21,7 +21,7 @@ warnings.filterwarnings('ignore')
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import models from real_world
-from real_world.matrix_factorization_DT import MF_DR_JL, MF_MRDR_JL, MF_Minimax
+from real_world.matrix_factorization_DT import MF_DR_JL, MF_MRDR_JL, MF_Minimax, MF_DR_BIAS, MF_DR_BMSE, MF_DR_DCE
 
 # ----------- util functions for 4 error metrics ------------
 # 1. ECE
@@ -279,7 +279,7 @@ def get_model_propensity_scores(model, model_name: str, x_test: np.ndarray, devi
     with torch.no_grad():
         x_test_tensor = torch.LongTensor(x_test).to(device)
         
-        if model_name in ['MF_DR_JL', 'MF_MRDR_JL']:
+        if model_name in ['MF_DR_JL', 'MF_MRDR_JL', 'MF_DR_BIAS', 'MF_DR_BMSE', 'MF_DR_DCE']:
             # These models use NCF_BaseModel as propensity model
             prop_scores = model.propensity_model.forward(x_test_tensor)
         elif model_name == 'MF_Minimax':
@@ -327,6 +327,31 @@ def train_and_evaluate_model(model_name: str, data_splits: Dict, args) -> Tuple[
             embedding_k1=args.embedding_k,  # For prediction/imputation models
             abc_model_name='logistic_regression'
         )
+    elif model_name == 'MF_DR_BIAS':
+        model = MF_DR_BIAS(
+            num_users=num_users,
+            num_items=num_items,
+            batch_size=args.batch_size,
+            batch_size_prop=args.batch_size * 2,
+            embedding_k=args.embedding_k
+        )
+    elif model_name == 'MF_DR_BMSE':
+        model = MF_DR_BMSE(
+            num_users=num_users,
+            num_items=num_items,
+            batch_size=args.batch_size,
+            batch_size_prop=args.batch_size * 2,
+            embedding_k=args.embedding_k,
+            bmse_weight=args.bmse_weight
+        )
+    elif model_name == 'MF_DR_DCE':
+        model = MF_DR_DCE(
+            num_users=num_users,
+            num_items=num_items,
+            batch_size=args.batch_size,
+            batch_size_prop=args.batch_size * 2,
+            embedding_k=args.embedding_k
+        )
     else:
         raise ValueError(f"Unknown model: {model_name}")
     
@@ -340,10 +365,18 @@ def train_and_evaluate_model(model_name: str, data_splits: Dict, args) -> Tuple[
     
     # 1. compute propensity scores
     print("Computing propensity scores...")
-    model._compute_IPS(x_train, 
-                      num_epoch=args.prop_epochs, 
-                      lr=args.prop_lr,
-                      verbose=args.verbose)
+    if model_name == 'MF_DR_DCE':
+        model._compute_IPS(x_train, 
+                          num_epoch=args.prop_epochs, 
+                          lr=args.prop_lr,
+                          verbose=args.verbose,
+                          ece_weight=args.ece_weight,
+                          n_bins=args.n_bins)
+    else:
+        model._compute_IPS(x_train, 
+                          num_epoch=args.prop_epochs, 
+                          lr=args.prop_lr,
+                          verbose=args.verbose)
     
     # 2. train prediction model
     print(f"\nTraining prediction model...")
@@ -369,8 +402,16 @@ def train_and_evaluate_model(model_name: str, data_splits: Dict, args) -> Tuple[
                      lr=args.lr,
                      G=args.G,
                      verbose=args.verbose)
-        else:
+        elif model_name == 'MF_MRDR_JL':
             # MF_MRDR_JL doesn't use prior_y
+            model.fit(x_train, y_train,
+                     gamma=args.gamma,
+                     num_epoch=args.epochs,
+                     lr=args.lr,
+                     G=args.G,
+                     verbose=args.verbose)
+        else:
+            # MF_DR_BIAS, MF_DR_BMSE, and MF_DR_DCE
             model.fit(x_train, y_train,
                      gamma=args.gamma,
                      num_epoch=args.epochs,
@@ -449,8 +490,8 @@ def main():
         description='Evaluate MF models with calibration metrics on semi-synthetic data')
     
     parser.add_argument('--models', nargs='+', 
-                       default=['MF_Minimax'],
-                       choices=['MF_DR_JL', 'MF_MRDR_JL', 'MF_Minimax'],
+                       default=['MF_DR_DCE'],
+                       choices=['MF_DR_JL', 'MF_MRDR_JL', 'MF_Minimax', 'MF_DR_BIAS', 'MF_DR_BMSE', 'MF_DR_DCE'],
                        help='Models to evaluate')
     parser.add_argument('--epochs', type=int, default=1000,
                        help='Number of training epochs')
@@ -468,8 +509,14 @@ def main():
                        help='Propensity score clipping threshold')
     parser.add_argument('--G', type=int, default=2,
                        help='Ratio of unobserved to observed samples')
-    parser.add_argument('--beta', type=float, default=2,
+    parser.add_argument('--beta', type=float, default=1,
                        help='Weight for adversarial loss (MF_Minimax only)')
+    parser.add_argument('--bmse_weight', type=float, default=1,
+                       help='Weight for BMSE loss (MF_DR_BMSE only)')
+    parser.add_argument('--ece_weight', type=float, default=1,
+                       help='Weight for ECE loss (MF_DR_DCE only)')
+    parser.add_argument('--n_bins', type=int, default=10,
+                       help='Number of bins for ECE calculation (MF_DR_DCE only)')
     parser.add_argument('--test_ratio', type=float, default=0.2,
                        help='Test set ratio')
     parser.add_argument('--unbiased_test_ratio', type=float, default=0.2,

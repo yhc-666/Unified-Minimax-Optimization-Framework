@@ -10,7 +10,8 @@
       "Bash(cd:*)",
       "Bash(cd:*)",
       "Bash(grep:*)",
-      "Bash(cd:*)"
+      "Bash(cd:*)",
+      "Bash(ls:*)"
     ],
     "deny": []
   }

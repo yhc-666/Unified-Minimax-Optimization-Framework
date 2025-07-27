@@ -512,6 +512,218 @@ class MF_DR_JL(nn.Module):
     
 
 
+class MF_DR_DCE(MF_DR_JL):
+    """MF-DR with Doubly Robust estimation and Calibrated Expected (DCE) loss for propensity scores"""
+    
+    def __init__(self, num_users, num_items, batch_size, batch_size_prop, embedding_k=4, *args, **kwargs):
+        super().__init__(num_users, num_items, batch_size, batch_size_prop, embedding_k, *args, **kwargs)
+    
+    def _compute_IPS(self, x, num_epoch=1000, lr=0.05, lamb=0, 
+                     tol=1e-4, verbose=False, ece_weight=0.1, n_bins=10):
+        """
+        Compute propensity scores with ECE loss for better calibration
+        
+        Args:
+            x: Training data
+            num_epoch: Maximum epochs
+            lr: Learning rate
+            lamb: L2 regularization
+            tol: Early stopping tolerance
+            verbose: Print progress
+            ece_weight: Weight for ECE loss term
+            n_bins: Number of bins for ECE calculation
+        """
+        
+        obs = sps.csr_matrix((np.ones(x.shape[0]), (x[:, 0], x[:, 1])), 
+                           shape=(self.num_users, self.num_items), dtype=np.float32).toarray().reshape(-1)
+        optimizer_propensity = torch.optim.Adam(self.propensity_model.parameters(), lr=lr, weight_decay=lamb)
+        
+        last_loss = 1e9
+        
+        num_sample = len(obs)
+        total_batch = num_sample // self.batch_size_prop
+        x_all = generate_total_sample(self.num_users, self.num_items)
+        early_stop = 0
+        
+        pbar = tqdm(range(num_epoch), desc="[MF-DR-DCE-PS] Computing IPS with ECE", disable=not verbose)
+        for epoch in pbar:
+            # sampling counterfactuals
+            ul_idxs = np.arange(x_all.shape[0])
+            np.random.shuffle(ul_idxs)
+
+            epoch_loss = 0
+            epoch_ece = 0
+
+            for idx in range(total_batch):
+                # mini-batch training
+                x_all_idx = ul_idxs[idx * self.batch_size_prop : (idx+1) * self.batch_size_prop]
+                
+                x_sampled = x_all[x_all_idx]
+                prop = self.propensity_model.forward(x_sampled)
+
+                sub_obs = obs[x_all_idx]
+                sub_obs = torch.Tensor(sub_obs).to(self.device)
+
+                # MSE loss
+                mse_loss = nn.MSELoss()(prop, sub_obs)
+                
+                # ECE loss
+                ece_loss = compute_ece_loss(prop, sub_obs, n_bins)
+                
+                # Combined loss
+                prop_loss = mse_loss + ece_weight * ece_loss
+                
+                optimizer_propensity.zero_grad()
+                prop_loss.backward()
+                optimizer_propensity.step()
+                
+                epoch_loss += mse_loss.detach().cpu().numpy()
+                epoch_ece += ece_loss.detach().cpu().numpy()
+
+            pbar.set_postfix({'mse_loss': epoch_loss, 'ece_loss': epoch_ece})
+            
+            relative_loss_div = (last_loss-epoch_loss)/(last_loss+1e-10)
+            if  relative_loss_div < tol:
+                if early_stop > 5:
+                    if verbose:
+                        print("\n[MF-DR-DCE-PS] epoch:{}, mse_loss:{}, ece_loss:{}".format(
+                            epoch, epoch_loss, epoch_ece))
+                    break
+                early_stop += 1
+                
+            last_loss = epoch_loss
+
+            if epoch == num_epoch - 1:
+                print("[MF-DR-DCE-PS] Reach preset epochs, it seems does not converge.")
+    
+    def fit(self, x, y, stop=5, num_epoch=1000, lr=0.05, lamb=0, gamma=0.1,
+            tol=1e-4, G=1, verbose=True, ece_weight=0.1, n_bins=10):
+        """
+        Fit the model with ECE-regularized propensity scores
+        
+        Additional Args:
+            ece_weight: Weight for ECE loss in propensity training
+            n_bins: Number of bins for ECE calculation
+        """
+        # First compute propensity scores with ECE loss
+        self._compute_IPS(x, num_epoch=num_epoch, lr=lr, lamb=lamb, 
+                         tol=tol, verbose=verbose, ece_weight=ece_weight, n_bins=n_bins)
+        
+        # Then run the standard DR-JL training
+        super().fit(x, y, stop=stop, num_epoch=num_epoch, lr=lr, lamb=lamb, 
+                   gamma=gamma, tol=tol, G=G, verbose=verbose)
+
+
+class MF_DR_BMSE(MF_DR_JL):
+    """MF-DR with BMSE loss for propensity score learning"""
+    
+    def __init__(self, num_users, num_items, batch_size, batch_size_prop, embedding_k=4, 
+                 bmse_weight=1.0, *args, **kwargs):
+        super().__init__(num_users, num_items, batch_size, batch_size_prop, embedding_k, *args, **kwargs)
+        self.bmse_weight = bmse_weight
+    
+    def _get_phi_normalized(self, x):
+        """Extract and normalize prediction model features (logits)"""
+        self.prediction_model.eval()
+        with torch.no_grad():
+            if isinstance(x, np.ndarray):
+                x = torch.LongTensor(x).to(self.device)
+            
+            user_idx = x[:, 0]
+            item_idx = x[:, 1]
+            
+            # Get embeddings from prediction model
+            U_emb = self.prediction_model.W(user_idx)
+            V_emb = self.prediction_model.H(item_idx)
+            logits = torch.sum(U_emb.mul(V_emb), 1)
+            
+            # Normalize to [0, 1]
+            min_val = logits.min()
+            max_val = logits.max()
+            
+            if max_val - min_val < 1e-8:
+                phi = torch.full_like(logits, 0.5)
+            else:
+                phi = (logits - min_val) / (max_val - min_val)
+            
+            return phi.unsqueeze(1)
+    
+    def _compute_IPS(self, x, num_epoch=1000, lr=0.05, lamb=0, 
+                     tol=1e-4, verbose=False):
+        """
+        Compute propensity scores with BMSE regularization
+        """
+        print(f'[MF-DR-BMSE-PS] Computing IPS with BMSE weight={self.bmse_weight}')
+        
+        obs = sps.csr_matrix((np.ones(x.shape[0]), (x[:, 0], x[:, 1])), 
+                           shape=(self.num_users, self.num_items), dtype=np.float32).toarray().reshape(-1)
+        optimizer_propensity = torch.optim.Adam(self.propensity_model.parameters(), lr=lr, weight_decay=lamb)
+        
+        last_loss = 1e9
+        
+        num_sample = len(obs)
+        total_batch = num_sample // self.batch_size_prop
+        x_all = generate_total_sample(self.num_users, self.num_items)
+        early_stop = 0
+        
+        pbar = tqdm(range(num_epoch), desc="[MF-DR-BMSE-PS] Computing IPS with BMSE", disable=not verbose)
+        for epoch in pbar:
+            ul_idxs = np.arange(x_all.shape[0])
+            np.random.shuffle(ul_idxs)
+            
+            epoch_loss = 0
+            epoch_bmse = 0
+            
+            for idx in range(total_batch):
+                x_all_idx = ul_idxs[idx * self.batch_size_prop : (idx+1) * self.batch_size_prop]
+                
+                x_sampled = x_all[x_all_idx]
+                prop = self.propensity_model.forward(x_sampled)
+                
+                sub_obs = obs[x_all_idx]
+                sub_obs = torch.Tensor(sub_obs).to(self.device)
+                
+                # MSE loss
+                mse_loss = nn.MSELoss()(prop, sub_obs)
+                
+                # BMSE loss
+                # Clip propensity scores to avoid division by zero
+                prop_clipped = torch.clamp(prop, 1e-6, 1-1e-6)
+                
+                # Get normalized prediction features
+                phi = self._get_phi_normalized(x_sampled)
+                
+                # Compute BMSE: ||E[(o/p - (1-o)/(1-p)) * φ]||²
+                term = (sub_obs / prop_clipped - (1 - sub_obs) / (1 - prop_clipped)).unsqueeze(1) * phi
+                bmse_loss = term.mean(dim=0).norm(p=2) ** 2
+                
+                # Combined loss
+                total_loss = mse_loss + self.bmse_weight * bmse_loss
+                
+                optimizer_propensity.zero_grad()
+                total_loss.backward()
+                optimizer_propensity.step()
+                
+                epoch_loss += mse_loss.detach().cpu().numpy()
+                epoch_bmse += bmse_loss.detach().cpu().numpy()
+            
+            pbar.set_postfix({'mse_loss': epoch_loss, 'bmse_loss': epoch_bmse})
+            
+            relative_loss_div = (last_loss-epoch_loss)/(last_loss+1e-10)
+            if  relative_loss_div < tol:
+                if early_stop > 5:
+                    if verbose:
+                        print("\n[MF-DR-BMSE-PS] epoch:{}, mse_loss:{}, bmse_loss:{}".format(
+                            epoch, epoch_loss, epoch_bmse))
+                    break
+                early_stop += 1
+                
+            last_loss = epoch_loss
+            
+            if epoch == num_epoch - 1:
+                print("[MF-DR-BMSE-PS] Reach preset epochs, it seems does not converge.")
+
+
 class MF_MRDR_JL(nn.Module):
     def __init__(self, num_users, num_items, batch_size, batch_size_prop, embedding_k=4, *args, **kwargs):
         super().__init__()
@@ -879,6 +1091,40 @@ class MF_DR_BIAS(nn.Module):
 
         
     
+def compute_ece_loss(props, obs, n_bins=10):
+    """
+    Compute Expected Calibration Error loss for propensity scores
+    
+    Args:
+        props: Predicted propensity scores
+        obs: Observed binary outcomes
+        n_bins: Number of bins for calibration
+    
+    Returns:
+        ece_loss: Expected calibration error
+    """
+    # Sort by propensity scores
+    sorted_indices = torch.argsort(props)
+    sorted_props = props[sorted_indices]
+    sorted_obs = obs[sorted_indices]
+    
+    # Create equal-width bins
+    bin_boundaries = torch.linspace(0, 1, n_bins + 1, device=props.device)
+    bin_indices = torch.bucketize(sorted_props, bin_boundaries[1:-1], right=True)
+    
+    ece_loss = 0.0
+    for i in range(n_bins):
+        mask = (bin_indices == i)
+        if mask.sum() > 0:
+            bin_props = sorted_props[mask]
+            bin_obs = sorted_obs[mask]
+            # ECE: |avg(predicted) - avg(observed)|
+            bin_ece = torch.abs(bin_props.mean() - bin_obs.mean())
+            ece_loss += bin_ece * mask.sum() / props.shape[0]
+    
+    return ece_loss
+
+
 def one_hot(x):
     out = torch.cat([torch.unsqueeze(1-x,1),torch.unsqueeze(x,1)],axis=1)
     return out
