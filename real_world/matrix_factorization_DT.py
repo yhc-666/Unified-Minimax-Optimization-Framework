@@ -329,7 +329,178 @@ class MF_DR(nn.Module):
     def predict(self, x):
         pred = self.prediction_model.forward(x)
         return pred.detach().cpu().numpy()
+
+
+
+class MF_DR_JL(nn.Module):
+    def __init__(self, num_users, num_items, batch_size, batch_size_prop, embedding_k=4, *args, **kwargs):
+        super().__init__()
+        self.num_users = num_users
+        self.num_items = num_items
+        self.embedding_k = embedding_k
+        self.batch_size = batch_size
+        self.batch_size_prop = batch_size_prop
+        self.prediction_model = MF_BaseModel(
+            num_users = self.num_users, num_items = self.num_items, batch_size = self.batch_size, embedding_k=self.embedding_k, *args, **kwargs)
+        self.imputation_model = MF_BaseModel(
+            num_users=self.num_users, num_items=self.num_items, batch_size = self.batch_size, embedding_k=self.embedding_k)
+        self.propensity_model = NCF_BaseModel(
+            num_users = self.num_users, num_items = self.num_items, batch_size = self.batch_size, embedding_k=self.embedding_k, *args, **kwargs)
+
+        self.sigmoid = torch.nn.Sigmoid()
+        self.xent_func = torch.nn.BCELoss()
+
+    def _compute_IPS(self, x,
+        num_epoch=1000, lr=0.05, lamb=0, 
+        tol=1e-4, verbose=False):
+        
+        obs = sps.csr_matrix((np.ones(x.shape[0]), (x[:, 0], x[:, 1])), shape=(self.num_users, self.num_items), dtype=np.float32).toarray().reshape(-1)
+        optimizer_propensity = torch.optim.Adam(self.propensity_model.parameters(), lr=lr, weight_decay=lamb)
+        
+        last_loss = 1e9
+        
+        num_sample = len(obs)
+        total_batch = num_sample // self.batch_size_prop
+        x_all = generate_total_sample(self.num_users, self.num_items)
+        early_stop = 0
+        
+        for epoch in range(num_epoch):
+
+            # sampling counterfactuals
+            ul_idxs = np.arange(x_all.shape[0]) # all
+            np.random.shuffle(ul_idxs)
+
+            epoch_loss = 0
+
+            for idx in range(total_batch):
+                # mini-batch training
+                x_all_idx = ul_idxs[idx * self.batch_size_prop : (idx+1) * self.batch_size_prop]
+                
+                x_sampled = x_all[x_all_idx]
+                prop = self.propensity_model.forward(x_sampled)
+
+                sub_obs = obs[x_all_idx]
+                sub_obs = torch.Tensor(sub_obs).cuda()
+
+                prop_loss = nn.MSELoss()(prop, sub_obs)
+                optimizer_propensity.zero_grad()
+                prop_loss.backward()
+                optimizer_propensity.step()
+                
+                epoch_loss += prop_loss.detach().cpu().numpy()
+
+            relative_loss_div = (last_loss-epoch_loss)/(last_loss+1e-10)
+            if  relative_loss_div < tol:
+                if early_stop > 5:
+                    print("[MF-DRJL-PS] epoch:{}, xent:{}".format(epoch, epoch_loss))
+                    break
+                early_stop += 1
+                
+            last_loss = epoch_loss
+
+            if epoch % 10 == 0 and verbose:
+                print("[MF-DRJL-PS] epoch:{}, xent:{}".format(epoch, epoch_loss))
+
+            if epoch == num_epoch - 1:
+                print("[MF-DRJL-PS] Reach preset epochs, it seems does not converge.")        
+
+    def fit(self, x, y, stop = 5,
+        num_epoch=1000, lr=0.05, lamb=0, gamma = 0.1,
+        tol=1e-4, G=1, verbose=True): 
+
+        optimizer_prediction = torch.optim.Adam(
+            self.prediction_model.parameters(), lr=lr, weight_decay=lamb)
+        optimizer_imputation = torch.optim.Adam(
+            self.imputation_model.parameters(), lr=lr, weight_decay=lamb)
+        
+        last_loss = 1e9
+
+        x_all = generate_total_sample(self.num_users, self.num_items)
+
+        num_sample = len(x) 
+        total_batch = num_sample // self.batch_size
+
+        early_stop = 0
+        
+        for epoch in range(num_epoch): 
+            all_idx = np.arange(num_sample)
+            np.random.shuffle(all_idx)
+
+            # sampling counterfactuals
+            ul_idxs = np.arange(x_all.shape[0])
+            np.random.shuffle(ul_idxs)
+
+            epoch_loss = 0
+
+            for idx in range(total_batch):
+
+                # mini-batch training
+                selected_idx = all_idx[self.batch_size*idx:(idx+1)*self.batch_size]
+                sub_x = x[selected_idx] 
+                sub_y = y[selected_idx]
+
+                inv_prop = 1/torch.clip(self.propensity_model.forward(sub_x).detach(), gamma, 1)
+                
+                sub_y = torch.Tensor(sub_y).cuda()
+
+                        
+                pred = self.prediction_model.forward(sub_x)
+                imputation_y = self.imputation_model.predict(sub_x).cuda()                
+                
+                x_sampled = x_all[ul_idxs[G*idx* self.batch_size : G*(idx+1)*self.batch_size]]
+                                       
+                pred_u = self.prediction_model.forward(x_sampled) 
+                imputation_y1 = self.imputation_model.predict(x_sampled).cuda()
+
+                xent_loss = F.binary_cross_entropy(pred, sub_y, weight=inv_prop, reduction="sum") # o*eui/pui
+                imputation_loss = F.binary_cross_entropy(pred, imputation_y, reduction="sum")
+                 
+                ips_loss = (xent_loss - imputation_loss) # batch size
+                                
+                # direct loss                
+                
+                direct_loss = F.binary_cross_entropy(pred_u, imputation_y1, reduction="sum")
+                
+                loss = (ips_loss + direct_loss)/x_sampled.shape[0]
+
+                optimizer_prediction.zero_grad()
+                loss.backward()
+                optimizer_prediction.step()
+                                                           
+                epoch_loss += xent_loss.detach().cpu().numpy()                
+
+                pred = self.prediction_model.predict(sub_x).cuda()
+                imputation_y = self.imputation_model.forward(sub_x)
+
+                e_loss = F.binary_cross_entropy(pred, sub_y, reduction="none")
+                e_hat_loss = F.binary_cross_entropy(imputation_y, pred, reduction="none")
+                imp_loss = (((e_loss.detach() - e_hat_loss) ** 2) * inv_prop).sum()
+
+                optimizer_imputation.zero_grad()
+                imp_loss.backward()
+                optimizer_imputation.step()                
+                
+            relative_loss_div = (last_loss-epoch_loss)/(last_loss+1e-10)
+            if  relative_loss_div < tol:
+                if early_stop > stop:
+                    print("[MF-DR-JL] epoch:{}, xent:{}".format(epoch, epoch_loss))
+                    break
+                else:
+                    early_stop += 1
+                
+            last_loss = epoch_loss
+
+            if epoch % 10 == 0 and verbose:
+                print("[MF-DR-JL] epoch:{}, xent:{}".format(epoch, epoch_loss))
+
+            if epoch == num_epoch - 1:
+                print("[MF-DR-JL] Reach preset epochs, it seems does not converge.")
     
+    def predict(self, x):
+        pred = self.prediction_model.predict(x)
+        return pred.detach().cpu().numpy()
+    
+
 
 class MF_MRDR_JL(nn.Module):
     def __init__(self, num_users, num_items, batch_size, batch_size_prop, embedding_k=4, *args, **kwargs):
