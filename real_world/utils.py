@@ -247,14 +247,17 @@ def ndcg_func(model, x_te, y_te, top_k_list = [5, 10]):
         pred_u = model.predict(x_u)
 
         for top_k in top_k_list:
-            pred_top_k = np.argsort(-pred_u)[:top_k]
+            # Handle case where user has fewer items than top_k
+            actual_k = min(top_k, len(pred_u))
+            
+            pred_top_k = np.argsort(-pred_u)[:actual_k]
             count = y_u[pred_top_k].sum()
 
-            log2_iplus1 = np.log2(1+np.arange(1,top_k+1))
+            log2_iplus1 = np.log2(1+np.arange(1,actual_k+1))
 
             dcg_k = y_u[pred_top_k] / log2_iplus1
 
-            best_dcg_k = y_u[np.argsort(-y_u)][:top_k] / log2_iplus1
+            best_dcg_k = y_u[np.argsort(-y_u)][:actual_k] / log2_iplus1
 
             if np.sum(best_dcg_k) == 0:
                 ndcg_k = 1
