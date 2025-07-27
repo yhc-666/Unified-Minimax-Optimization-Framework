@@ -24,7 +24,7 @@ from baselines import MF_DR, MF_MRDR_JL, MF_DR_BIAS, MF_DR_V2, dr_jl_abc
 
 
 
-def get_bins(hat_p: torch.Tensor, M: int, mode: str = 'equi_width'):
+def get_bins(hat_p: torch.Tensor, M: int, mode: str = 'equal_freq'):
     """Helper function for binning propensity scores."""
     device = hat_p.device
     if mode == 'equi_width':
@@ -47,7 +47,7 @@ def get_bins(hat_p: torch.Tensor, M: int, mode: str = 'equi_width'):
 def compute_ece_torch(hat_p: torch.Tensor,
                      obs: torch.Tensor,
                      M: int = 10,
-                     mode: str = 'equi_width') -> torch.Tensor:
+                     mode: str = 'equal_freq') -> torch.Tensor:
     """PyTorch implementation of Expected Calibration Error."""
     idx, one_hot = get_bins(hat_p, M, mode)
     n = float(len(hat_p))
@@ -66,21 +66,6 @@ def compute_ece_torch(hat_p: torch.Tensor,
             ece += weight * torch.abs(avg_obs - avg_hat_p)
     
     return ece
-
-
-def compute_l_abc(hat_p: torch.Tensor,
-                  obs: torch.Tensor,
-                  w: torch.Tensor = None,
-                  M: int = 10,
-                  mode: str = 'equi_width') -> torch.Tensor:
-    """General L_abc loss with optional weights."""
-    if w is None:
-        w = torch.ones_like(hat_p)
-    idx, one_hot = get_bins(hat_p, M, mode)
-    n = float(len(hat_p))
-    diff_sum = torch.matmul((w * (obs - hat_p)).unsqueeze(0), one_hot).squeeze(0)
-    l_abc = diff_sum.abs().sum() / n
-    return l_abc
 
 
 def compute_bmse_torch(phi: torch.Tensor,

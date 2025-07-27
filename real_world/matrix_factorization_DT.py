@@ -72,10 +72,11 @@ class MF_BaseModel(nn.Module):
         self.H = torch.nn.Embedding(self.num_items, self.embedding_k)
         self.sigmoid = torch.nn.Sigmoid()
         self.xent_func = torch.nn.BCELoss()
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     def forward(self, x, is_training=False):
-        user_idx = torch.LongTensor(x[:, 0]).cuda()
-        item_idx = torch.LongTensor(x[:, 1]).cuda()
+        user_idx = torch.LongTensor(x[:, 0]).to(self.device)
+        item_idx = torch.LongTensor(x[:, 1]).to(self.device)
         U_emb = self.W(user_idx)
         V_emb = self.H(item_idx)
 
@@ -105,13 +106,14 @@ class NCF_BaseModel(nn.Module):
         self.linear_1 = torch.nn.Linear(self.embedding_k*2, 1, bias = True)
         self.relu = torch.nn.ReLU()
         self.sigmoid = torch.nn.Sigmoid()
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         self.xent_func = torch.nn.BCELoss()
 
 
     def forward(self, x, is_training=False):
-        user_idx = torch.LongTensor(x[:,0]).cuda()
-        item_idx = torch.LongTensor(x[:,1]).cuda()
+        user_idx = torch.LongTensor(x[:,0]).to(self.device)
+        item_idx = torch.LongTensor(x[:,1]).to(self.device)
         U_emb = self.W(user_idx)
         V_emb = self.H(item_idx)
 
@@ -140,13 +142,14 @@ class Embedding_Sharing(nn.Module):
         self.H = torch.nn.Embedding(self.num_items, self.embedding_k)
         self.relu = torch.nn.ReLU()
         self.sigmoid = torch.nn.Sigmoid()
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         self.xent_func = torch.nn.BCELoss()
 
 
     def forward(self, x, is_training=False):
-        user_idx = torch.LongTensor(x[:,0]).cuda()
-        item_idx = torch.LongTensor(x[:,1]).cuda()
+        user_idx = torch.LongTensor(x[:,0]).to(self.device)
+        item_idx = torch.LongTensor(x[:,1]).to(self.device)
         U_emb = self.W(user_idx)
         V_emb = self.H(item_idx)
 
@@ -195,6 +198,8 @@ class MF_DR(nn.Module):
 
         self.sigmoid = torch.nn.Sigmoid()
         self.xent_func = torch.nn.BCELoss()
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     def _compute_IPS(self, x,
         num_epoch=1000, lr=0.05, lamb=0, 
@@ -226,7 +231,7 @@ class MF_DR(nn.Module):
                 prop = self.propensity_model.forward(x_sampled)
                 
                 sub_obs = obs[x_all_idx]
-                sub_obs = torch.Tensor(sub_obs).cuda()
+                sub_obs = torch.Tensor(sub_obs).to(self.device)
 
                 prop_loss = nn.MSELoss()(prop, sub_obs)
                 optimizer_propensity.zero_grad()
@@ -285,7 +290,7 @@ class MF_DR(nn.Module):
                 # propensity score
                 inv_prop = 1/torch.clip(self.propensity_model.forward(sub_x).detach(), gamma, 1)
 
-                sub_y = torch.Tensor(sub_y).cuda()
+                sub_y = torch.Tensor(sub_y).to(self.device)
 
                 pred, u_emb, v_emb = self.prediction_model.forward(sub_x, True)  
 
@@ -295,7 +300,7 @@ class MF_DR(nn.Module):
 
                 xent_loss = F.binary_cross_entropy(pred, sub_y, weight=inv_prop, reduction="sum") # o*eui/pui
                 
-                imputation_y = torch.Tensor([prior_y]* G *selected_idx.shape[0]).cuda()
+                imputation_y = torch.Tensor([prior_y]* G *selected_idx.shape[0]).to(self.device)
                 imputation_loss = F.binary_cross_entropy(pred, imputation_y[0:self.batch_size], reduction="sum") # e^ui
 
                 ips_loss = (xent_loss - imputation_loss) # batch size
@@ -349,6 +354,7 @@ class MF_DR_JL(nn.Module):
 
         self.sigmoid = torch.nn.Sigmoid()
         self.xent_func = torch.nn.BCELoss()
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     def _compute_IPS(self, x,
         num_epoch=1000, lr=0.05, lamb=0, 
@@ -380,7 +386,7 @@ class MF_DR_JL(nn.Module):
                 prop = self.propensity_model.forward(x_sampled)
 
                 sub_obs = obs[x_all_idx]
-                sub_obs = torch.Tensor(sub_obs).cuda()
+                sub_obs = torch.Tensor(sub_obs).to(self.device)
 
                 prop_loss = nn.MSELoss()(prop, sub_obs)
                 optimizer_propensity.zero_grad()
@@ -441,16 +447,16 @@ class MF_DR_JL(nn.Module):
 
                 inv_prop = 1/torch.clip(self.propensity_model.forward(sub_x).detach(), gamma, 1)
                 
-                sub_y = torch.Tensor(sub_y).cuda()
+                sub_y = torch.Tensor(sub_y).to(self.device)
 
                         
                 pred = self.prediction_model.forward(sub_x)
-                imputation_y = self.imputation_model.predict(sub_x).cuda()                
+                imputation_y = self.imputation_model.predict(sub_x).to(self.device)                
                 
                 x_sampled = x_all[ul_idxs[G*idx* self.batch_size : G*(idx+1)*self.batch_size]]
                                        
                 pred_u = self.prediction_model.forward(x_sampled) 
-                imputation_y1 = self.imputation_model.predict(x_sampled).cuda()
+                imputation_y1 = self.imputation_model.predict(x_sampled).to(self.device)
 
                 xent_loss = F.binary_cross_entropy(pred, sub_y, weight=inv_prop, reduction="sum") # o*eui/pui
                 imputation_loss = F.binary_cross_entropy(pred, imputation_y, reduction="sum")
@@ -469,7 +475,7 @@ class MF_DR_JL(nn.Module):
                                                            
                 epoch_loss += xent_loss.detach().cpu().numpy()                
 
-                pred = self.prediction_model.predict(sub_x).cuda()
+                pred = self.prediction_model.predict(sub_x).to(self.device)
                 imputation_y = self.imputation_model.forward(sub_x)
 
                 e_loss = F.binary_cross_entropy(pred, sub_y, reduction="none")
@@ -519,6 +525,7 @@ class MF_MRDR_JL(nn.Module):
         
         self.sigmoid = torch.nn.Sigmoid()
         self.xent_func = torch.nn.BCELoss()
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     def _compute_IPS(self, x,
         num_epoch=1000, lr=0.05, lamb=0, 
@@ -551,7 +558,7 @@ class MF_MRDR_JL(nn.Module):
                 # propensity score
                 
                 sub_obs = obs[x_all_idx]
-                sub_obs = torch.Tensor(sub_obs).cuda()
+                sub_obs = torch.Tensor(sub_obs).to(self.device)
                 
                 prop_loss = nn.MSELoss()(prop, sub_obs)
                 optimizer_propensity.zero_grad()
@@ -615,17 +622,17 @@ class MF_MRDR_JL(nn.Module):
 
                 inv_prop = 1/torch.clip(self.propensity_model.forward(sub_x).detach(), gamma, 1)             
                 
-                sub_y = torch.Tensor(sub_y).cuda()
+                sub_y = torch.Tensor(sub_y).to(self.device)
 
                         
                 pred = self.prediction_model.forward(sub_x)
-                imputation_y = self.imputation_model.predict(sub_x).cuda()
+                imputation_y = self.imputation_model.predict(sub_x).to(self.device)
                 
                 
                 x_sampled = x_all[ul_idxs[G*idx* self.batch_size : G*(idx+1)*self.batch_size]]
                                        
                 pred_u = self.prediction_model.forward(x_sampled) 
-                imputation_y1 = self.imputation_model.predict(x_sampled).cuda()
+                imputation_y1 = self.imputation_model.predict(x_sampled).to(self.device)
           
                 xent_loss = F.binary_cross_entropy(pred, sub_y, weight=inv_prop, reduction="sum") # o*eui/pui
                 imputation_loss = F.binary_cross_entropy(pred, imputation_y, reduction="sum")
@@ -648,7 +655,7 @@ class MF_MRDR_JL(nn.Module):
                      
                 epoch_loss += xent_loss.detach().cpu().numpy()                
 
-                pred = self.prediction_model.predict(sub_x).cuda()
+                pred = self.prediction_model.predict(sub_x).to(self.device)
                 imputation_y = self.imputation_model.forward(sub_x)
                 
                 e_loss = F.binary_cross_entropy(pred, sub_y, reduction="none")
@@ -701,6 +708,7 @@ class MF_DR_BIAS(nn.Module):
         
         self.sigmoid = torch.nn.Sigmoid()
         self.xent_func = torch.nn.BCELoss()
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     def fit(self, x, y, y_ips,
         num_epoch=1000, batch_size=128, lr=0.05, lamb=0, 
@@ -744,18 +752,18 @@ class MF_DR_BIAS(nn.Module):
                 sub_y = y[selected_idx]
 
                 # propensity score
-                inv_prop = one_over_zl[selected_idx].cuda()                
+                inv_prop = one_over_zl[selected_idx].to(self.device)                
 
-                sub_y = torch.Tensor(sub_y).cuda()
+                sub_y = torch.Tensor(sub_y).to(self.device)
 
                         
                 pred = self.prediction_model.forward(sub_x)
-                imputation_y = self.imputation.predict(sub_x).cuda()
+                imputation_y = self.imputation.predict(sub_x).to(self.device)
                 
                 x_sampled = x_all[ul_idxs[G*idx* batch_size : G*(idx+1)*batch_size]]
                                        
                 pred_u = self.prediction_model.forward(x_sampled) 
-                imputation_y1 = self.imputation.predict(x_sampled).cuda()
+                imputation_y1 = self.imputation.predict(x_sampled).to(self.device)
                 
                 xent_loss = F.binary_cross_entropy(pred, sub_y, weight=inv_prop, reduction="sum") # o*eui/pui
                 imputation_loss = F.binary_cross_entropy(pred, imputation_y, reduction="sum")                 
@@ -776,7 +784,7 @@ class MF_DR_BIAS(nn.Module):
 
                 epoch_loss += xent_loss.detach().cpu().numpy()                
 
-                pred = self.prediction_model.predict(sub_x).cuda()
+                pred = self.prediction_model.predict(sub_x).to(self.device)
                 imputation_y = self.imputation.forward(sub_x)                
                 
                 e_loss = F.binary_cross_entropy(pred, sub_y, reduction="none")
