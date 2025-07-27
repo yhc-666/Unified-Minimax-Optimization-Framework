@@ -113,18 +113,43 @@ def get_phi_normalized(model, x, device='cuda'):
         if torch.is_tensor(x):
             x = x.cpu().numpy()
         
-        # Get raw logits (pre-sigmoid predictions)
+        # Convert to tensor
+        x_tensor = torch.LongTensor(x).to(device)
+        user_idx = x_tensor[:, 0]
+        item_idx = x_tensor[:, 1]
+        
+        # Get raw logits (pre-sigmoid predictions) based on model type
         if hasattr(model, 'prediction_model'):
-            # For models with separate prediction model (MF_MRDR_JL, MF_DR_BIAS, MF_DR_V2)
-            logits = model.prediction_model.forward(x)
+            # For MF_DR_JL, MF_MRDR_JL - they use MF_BaseModel
+            U_emb = model.prediction_model.W(user_idx)
+            V_emb = model.prediction_model.H(item_idx)
+            logits = torch.sum(U_emb.mul(V_emb), 1)
+            
         elif hasattr(model, 'model_pred'):
-            # For dr_jl_abc model
-            logits = model.model_pred.forward_logit(x)
+            # For MF_Minimax - uses MF class
+            U_emb = model.model_pred.W(user_idx)
+            V_emb = model.model_pred.H(item_idx)
+            logits = torch.sum(U_emb.mul(V_emb), 1)
+            
         else:
-            # For direct models (MF_DR)
-            logits = model.forward(x)
-
-        # debug 奇怪的问题
+            # For other models, try to get embeddings directly
+            if hasattr(model, 'W') and hasattr(model, 'H'):
+                U_emb = model.W(user_idx)
+                V_emb = model.H(item_idx)
+                logits = torch.sum(U_emb.mul(V_emb), 1)
+            else:
+                # Fallback: use forward and compute inverse sigmoid
+                output = model.forward(x)
+                if not torch.is_tensor(output):
+                    output = torch.tensor(output, device=device, dtype=torch.float32)
+                else:
+                    output = output.to(device)
+                # Compute logits from sigmoid output
+                # logit = log(p/(1-p))
+                output = torch.clamp(output, 1e-7, 1-1e-7)  # Avoid log(0)
+                logits = torch.log(output / (1 - output))
+        
+        # Ensure logits is on correct device
         if not torch.is_tensor(logits):
             logits = torch.tensor(logits, device=device, dtype=torch.float32)
         else:
@@ -224,10 +249,9 @@ def create_train_test_split(ground_truth: np.ndarray, propensity: np.ndarray,
     test_sample_idx = np.random.choice(test_idx, size=test_sample_size, replace=False)
     
     x_test = x_all[test_sample_idx]
-    y_test = y_all[test_sample_idx]  # Keep original values for DR metrics
+    y_test = y_all[test_sample_idx]  
     p_test = p_all[test_sample_idx]
     
-    # Binarize test labels
     y_test_binary = np.random.binomial(1, y_test).astype(np.float32)
     
     if verbose:
@@ -277,13 +301,12 @@ def train_and_evaluate_model(model_name: str, data_splits: Dict, args) -> Tuple[
     num_users = data_splits['num_users']
     num_items = data_splits['num_items']
     
-    # Initialize model with proper parameters
     if model_name == 'MF_DR_JL':
         model = MF_DR_JL(
             num_users=num_users, 
             num_items=num_items,
             batch_size=args.batch_size,
-            batch_size_prop=args.batch_size * 2,  # Typically larger
+            batch_size_prop=args.batch_size * 2,  
             embedding_k=args.embedding_k
         )
     elif model_name == 'MF_MRDR_JL':
@@ -315,14 +338,14 @@ def train_and_evaluate_model(model_name: str, data_splits: Dict, args) -> Tuple[
     x_train = data_splits['x_train']
     y_train = data_splits['y_train']
     
-    # First, compute propensity scores
+    # 1. compute propensity scores
     print("Computing propensity scores...")
     model._compute_IPS(x_train, 
                       num_epoch=args.prop_epochs, 
                       lr=args.prop_lr,
                       verbose=args.verbose)
     
-    # Then train the prediction model
+    # 2. train prediction model
     print(f"\nTraining prediction model...")
     if model_name == 'MF_Minimax':
         # MF_Minimax has different fit signature
@@ -380,19 +403,20 @@ def train_and_evaluate_model(model_name: str, data_splits: Dict, args) -> Tuple[
     p_test_torch = torch.clamp(p_test_torch, 1e-6, 1-1e-6)
     hat_p_test_torch = torch.clamp(hat_p_test_torch, 1e-6, 1-1e-6)
     
-    # Calculate calibration metrics
-    # ECE: Compare predicted propensity with observed binary outcomes
+    # 1. ECE
     ece = compute_ece_torch(hat_p_test_torch, y_test_binary_torch, M=10, mode='equi_width')
     
-    # BMSE: Using model's normalized logits
+    # 2. BMSE
     phi = get_phi_normalized(model, x_test, device)
     if phi is not None:
         bmse = compute_bmse_torch(phi, hat_p_test_torch, y_test_binary_torch)
     else:
         bmse = torch.tensor(float('nan'))
     
-    # DR Bias and Variance using true values
+    # 3. DR Bias
     dr_bias = compute_dr_bias_torch(p_test_torch, hat_p_test_torch, y_test_torch, y_pred_torch)
+
+    # 4. DR Variance
     dr_variance = compute_dr_variance_torch(p_test_torch, hat_p_test_torch, y_test_torch, y_pred_torch)
     
     # Additional metrics
@@ -425,7 +449,7 @@ def main():
         description='Evaluate MF models with calibration metrics on semi-synthetic data')
     
     parser.add_argument('--models', nargs='+', 
-                       default=['MF_DR_JL', 'MF_MRDR_JL', 'MF_Minimax'],
+                       default=['MF_Minimax'],
                        choices=['MF_DR_JL', 'MF_MRDR_JL', 'MF_Minimax'],
                        help='Models to evaluate')
     parser.add_argument('--epochs', type=int, default=1000,
@@ -444,7 +468,7 @@ def main():
                        help='Propensity score clipping threshold')
     parser.add_argument('--G', type=int, default=2,
                        help='Ratio of unobserved to observed samples')
-    parser.add_argument('--beta', type=float, default=1.0,
+    parser.add_argument('--beta', type=float, default=2,
                        help='Weight for adversarial loss (MF_Minimax only)')
     parser.add_argument('--test_ratio', type=float, default=0.2,
                        help='Test set ratio')
@@ -452,7 +476,7 @@ def main():
                        help='Ratio of test set to use as unbiased sample')
     parser.add_argument('--save_results', type=str, default='evaluation_results.csv',
                        help='Path to save results CSV')
-    parser.add_argument('--verbose', action='store_true',
+    parser.add_argument('--verbose', default=True,
                        help='Show training progress')
     parser.add_argument('--seed', type=int, default=2024,
                        help='Random seed')

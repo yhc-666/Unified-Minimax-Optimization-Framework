@@ -215,7 +215,8 @@ class MF_DR(nn.Module):
         x_all = generate_total_sample(self.num_users, self.num_items)
         early_stop = 0
 
-        for epoch in range(num_epoch):
+        pbar = tqdm(range(num_epoch), desc="[MF-DR-PS] Computing IPS", disable=not verbose)
+        for epoch in pbar:
 
             # sampling counterfactuals
             ul_idxs = np.arange(x_all.shape[0]) # all
@@ -240,17 +241,17 @@ class MF_DR(nn.Module):
                 
                 epoch_loss += prop_loss.detach().cpu().numpy()
 
+            pbar.set_postfix({'loss': epoch_loss})
+            
             relative_loss_div = (last_loss-epoch_loss)/(last_loss+1e-10)
             if  relative_loss_div < tol:
                 if early_stop > 5:
-                    print("[MF-DR-PS] epoch:{}, xent:{}".format(epoch, epoch_loss))
+                    if verbose:
+                        print("\n[MF-DR-PS] epoch:{}, xent:{}".format(epoch, epoch_loss))
                     break
                 early_stop += 1
                 
             last_loss = epoch_loss
-
-            if epoch % 10 == 0 and verbose:
-                print("[MF-DR-PS] epoch:{}, xent:{}".format(epoch, epoch_loss))
 
             if epoch == num_epoch - 1:
                 print("[MF-DR-PS] Reach preset epochs, it seems does not converge.")        
@@ -270,7 +271,8 @@ class MF_DR(nn.Module):
         
         prior_y = prior_y.mean()
         early_stop = 0
-        for epoch in range(num_epoch):
+        pbar = tqdm(range(num_epoch), desc="[MF-DR] Training", disable=not verbose)
+        for epoch in pbar:
             all_idx = np.arange(num_sample) # observation
             np.random.shuffle(all_idx)
 
@@ -316,17 +318,17 @@ class MF_DR(nn.Module):
                 
                 epoch_loss += xent_loss.detach().cpu().numpy()
 
+            pbar.set_postfix({'loss': epoch_loss})
+            
             relative_loss_div = (last_loss-epoch_loss)/(last_loss+1e-10)
             if  relative_loss_div < tol:
                 if early_stop > 5:
-                    print("[MF-DR] epoch:{}, xent:{}".format(epoch, epoch_loss))
+                    if verbose:
+                        print("\n[MF-DR] epoch:{}, xent:{}".format(epoch, epoch_loss))
                     break
                 early_stop += 1
                 
             last_loss = epoch_loss
-
-            if epoch % 10 == 0 and verbose:
-                print("[MF-DR] epoch:{}, xent:{}".format(epoch, epoch_loss))
 
             if epoch == num_epoch - 1:
                 print("[MF-DR] Reach preset epochs, it seems does not converge.")
@@ -370,7 +372,8 @@ class MF_DR_JL(nn.Module):
         x_all = generate_total_sample(self.num_users, self.num_items)
         early_stop = 0
         
-        for epoch in range(num_epoch):
+        pbar = tqdm(range(num_epoch), desc="[MF-DRJL-PS] Computing IPS", disable=not verbose)
+        for epoch in pbar:
 
             # sampling counterfactuals
             ul_idxs = np.arange(x_all.shape[0]) # all
@@ -395,17 +398,17 @@ class MF_DR_JL(nn.Module):
                 
                 epoch_loss += prop_loss.detach().cpu().numpy()
 
+            pbar.set_postfix({'loss': epoch_loss})
+            
             relative_loss_div = (last_loss-epoch_loss)/(last_loss+1e-10)
             if  relative_loss_div < tol:
                 if early_stop > 5:
-                    print("[MF-DRJL-PS] epoch:{}, xent:{}".format(epoch, epoch_loss))
+                    if verbose:
+                        print("\n[MF-DRJL-PS] epoch:{}, xent:{}".format(epoch, epoch_loss))
                     break
                 early_stop += 1
                 
             last_loss = epoch_loss
-
-            if epoch % 10 == 0 and verbose:
-                print("[MF-DRJL-PS] epoch:{}, xent:{}".format(epoch, epoch_loss))
 
             if epoch == num_epoch - 1:
                 print("[MF-DRJL-PS] Reach preset epochs, it seems does not converge.")        
@@ -428,7 +431,8 @@ class MF_DR_JL(nn.Module):
 
         early_stop = 0
         
-        for epoch in range(num_epoch): 
+        pbar = tqdm(range(num_epoch), desc="[MF-DR-JL] Training", disable=not verbose)
+        for epoch in pbar: 
             all_idx = np.arange(num_sample)
             np.random.shuffle(all_idx)
 
@@ -541,7 +545,8 @@ class MF_MRDR_JL(nn.Module):
         x_all = generate_total_sample(self.num_users, self.num_items)
         early_stop = 0
 
-        for epoch in range(num_epoch):
+        pbar = tqdm(range(num_epoch), desc="[MF-MRDR-JL] Computing IPS", disable=not verbose)
+        for epoch in pbar:
 
             # sampling counterfactuals
             ul_idxs = np.arange(x_all.shape[0])
@@ -577,7 +582,7 @@ class MF_MRDR_JL(nn.Module):
             last_loss = epoch_loss
 
             if epoch % 10 == 0 and verbose:
-                print("[MF-MRDRJL-PS] epoch:{}, xent:{}".format(epoch, epoch_loss))
+                pbar.set_postfix({'loss': epoch_loss})
 
             if epoch == num_epoch - 1:
                 print("[MF-MRDRJL-PS] Reach preset epochs, it seems does not converge.")        
@@ -601,7 +606,8 @@ class MF_MRDR_JL(nn.Module):
 
         early_stop = 0
 
-        for epoch in range(num_epoch): 
+        pbar = tqdm(range(num_epoch), desc="[MF-MRDR-JL] Training", disable=not verbose)
+        for epoch in pbar: 
             all_idx = np.arange(num_sample) # observation
             np.random.shuffle(all_idx)
 
@@ -678,7 +684,7 @@ class MF_MRDR_JL(nn.Module):
             last_loss = epoch_loss
 
             if epoch % 10 == 0 and verbose:
-                print("[MF-MRDR-JL] epoch:{}, xent:{}".format(epoch, epoch_loss))
+                pbar.set_postfix({'loss': epoch_loss})
 
             if epoch == num_epoch - 1:
                 print("[MF-MRDR-JL] Reach preset epochs, it seems does not converge.")
@@ -688,32 +694,35 @@ class MF_MRDR_JL(nn.Module):
         pred = self.prediction_model.predict(x)
         return pred.detach().cpu().numpy()            
         
-    
-    
-    
-    
 
 
-# DR-BIAS incorrect
+# DR-BIAS 
 class MF_DR_BIAS(nn.Module):
-    def __init__(self, num_users, num_items, embedding_k=4, *args, **kwargs):
+    def __init__(self, num_users, num_items, batch_size, batch_size_prop, embedding_k=4, *args, **kwargs):
         super().__init__()
         self.num_users = num_users
         self.num_items = num_items
         self.embedding_k = embedding_k
+        self.batch_size = batch_size
+        self.batch_size_prop = batch_size_prop
         self.prediction_model = MF_BaseModel(
             num_users=self.num_users, num_items=self.num_items, embedding_k=self.embedding_k)
         self.imputation = MF_BaseModel(
             num_users=self.num_users, num_items=self.num_items, embedding_k=self.embedding_k)
+        self.propensity_model = NCF_BaseModel(
+            num_users=self.num_users, num_items=self.num_items, embedding_k=self.embedding_k, *args, **kwargs)
         
         self.sigmoid = torch.nn.Sigmoid()
         self.xent_func = torch.nn.BCELoss()
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    def fit(self, x, y, y_ips,
-        num_epoch=1000, batch_size=128, lr=0.05, lamb=0, 
+    def fit(self, x, y, gamma=0.1,
+        num_epoch=1000, lr=0.05, lamb=0, 
         tol=1e-4, G=1, verbose = False): 
 
+        # First train the propensity model
+        self._compute_IPS(x, num_epoch=num_epoch, lr=lr, lamb=lamb, tol=tol, verbose=verbose)
+        
         optimizer_prediction = torch.optim.Adam(
             self.prediction_model.parameters(), lr=lr, weight_decay=lamb)
         optimizer_imputation = torch.optim.Adam(
@@ -726,15 +735,11 @@ class MF_DR_BIAS(nn.Module):
         x_all = generate_total_sample(self.num_users, self.num_items)
 
         num_sample = len(x) #6960 
-        total_batch = num_sample // batch_size
-
-        if y_ips is None:
-            one_over_zl = self._compute_IPS(x, y)
-        else:
-            one_over_zl = self._compute_IPS(x, y, y_ips)
+        total_batch = num_sample // self.batch_size
 
         early_stop = 0
-        for epoch in range(num_epoch):
+        pbar = tqdm(range(num_epoch), desc="[MF-DR-BIAS] Training", disable=not verbose)
+        for epoch in pbar:
             all_idx = np.arange(num_sample) # observation
             np.random.shuffle(all_idx)
 
@@ -747,12 +752,12 @@ class MF_DR_BIAS(nn.Module):
             for idx in range(total_batch):
 
                 # mini-batch training
-                selected_idx = all_idx[batch_size*idx:(idx+1)*batch_size]
+                selected_idx = all_idx[self.batch_size*idx:(idx+1)*self.batch_size]
                 sub_x = x[selected_idx]
                 sub_y = y[selected_idx]
 
-                # propensity score
-                inv_prop = one_over_zl[selected_idx].to(self.device)                
+                # propensity score using trained model
+                inv_prop = 1/torch.clip(self.propensity_model.forward(sub_x).detach(), gamma, 1)                
 
                 sub_y = torch.Tensor(sub_y).to(self.device)
 
@@ -760,7 +765,7 @@ class MF_DR_BIAS(nn.Module):
                 pred = self.prediction_model.forward(sub_x)
                 imputation_y = self.imputation.predict(sub_x).to(self.device)
                 
-                x_sampled = x_all[ul_idxs[G*idx* batch_size : G*(idx+1)*batch_size]]
+                x_sampled = x_all[ul_idxs[G*idx* self.batch_size : G*(idx+1)*self.batch_size]]
                                        
                 pred_u = self.prediction_model.forward(x_sampled) 
                 imputation_y1 = self.imputation.predict(x_sampled).to(self.device)
@@ -806,7 +811,7 @@ class MF_DR_BIAS(nn.Module):
             last_loss = epoch_loss
 
             if epoch % 10 == 0 and verbose:
-                print("[MF-MRDR-JL] epoch:{}, xent:{}".format(epoch, epoch_loss))
+                pbar.set_postfix({'loss': epoch_loss})
 
             if epoch == num_epoch - 1:
                 print("[MF-MRDR-JL] Reach preset epochs, it seems does not converge.")
@@ -815,24 +820,60 @@ class MF_DR_BIAS(nn.Module):
         pred = self.prediction_model.predict(x)
         return pred.detach().cpu().numpy()
 
-    def _compute_IPS(self,x,y,y_ips=None):
-        if y_ips is None:
-            one_over_zl = np.ones(len(y))
-        else:
-            py1 = y_ips.sum() / len(y_ips)
-            py0 = 1 - py1
-            po1 = len(x) / (x[:,0].max() * x[:,1].max())
-            py1o1 = y.sum() / len(y)
-            py0o1 = 1 - py1o1
+    def _compute_IPS(self, x,
+        num_epoch=1000, lr=0.05, lamb=0, 
+        tol=1e-4, verbose=False):
+        
+        obs = sps.csr_matrix((np.ones(x.shape[0]), (x[:, 0], x[:, 1])), shape=(self.num_users, self.num_items), dtype=np.float32).toarray().reshape(-1)
+        optimizer_propensity = torch.optim.Adam(self.propensity_model.parameters(), lr=lr, weight_decay=lamb)
+        
+        last_loss = 1e9
+        
+        num_sample = len(obs)
+        total_batch = num_sample // self.batch_size_prop
+        x_all = generate_total_sample(self.num_users, self.num_items)
+        early_stop = 0
 
-            propensity = np.zeros(len(y))
+        pbar = tqdm(range(num_epoch), desc="[MF-DR-BIAS-PS] Computing IPS", disable=not verbose)
+        for epoch in pbar:
 
-            propensity[y == 0] = (py0o1 * po1) / py0
-            propensity[y == 1] = (py1o1 * po1) / py1
-            one_over_zl = 1 / propensity
+            # sampling counterfactuals
+            ul_idxs = np.arange(x_all.shape[0]) # all
+            np.random.shuffle(ul_idxs)
 
-        one_over_zl = torch.Tensor(one_over_zl)
-        return one_over_zl  
+            epoch_loss = 0
+
+            for idx in range(total_batch):
+                # mini-batch training
+                x_all_idx = ul_idxs[idx * self.batch_size_prop : (idx+1) * self.batch_size_prop]
+                
+                x_sampled = x_all[x_all_idx]
+                prop = self.propensity_model.forward(x_sampled)
+                
+                sub_obs = obs[x_all_idx]
+                sub_obs = torch.Tensor(sub_obs).to(self.device)
+
+                prop_loss = nn.MSELoss()(prop, sub_obs)
+                optimizer_propensity.zero_grad()
+                prop_loss.backward()
+                optimizer_propensity.step()
+                
+                epoch_loss += prop_loss.detach().cpu().numpy()
+
+            pbar.set_postfix({'loss': epoch_loss})
+            
+            relative_loss_div = (last_loss-epoch_loss)/(last_loss+1e-10)
+            if  relative_loss_div < tol:
+                if early_stop > 5:
+                    if verbose:
+                        print("\n[MF-DR-BIAS-PS] epoch:{}, xent:{}".format(epoch, epoch_loss))
+                    break
+                early_stop += 1
+                
+            last_loss = epoch_loss
+
+            if epoch == num_epoch - 1:
+                print("[MF-DR-BIAS-PS] Reach preset epochs, it seems does not converge.")  
     
     
 
