@@ -1,0 +1,48 @@
+Optuna Hyperparameter Optimization Summary
+============================================================
+
+Model: MF_DR_JL
+Objective: ECE (minimize)
+Number of trials: 2
+Best value: 0.202611
+Best trial: 0
+
+Best Parameters:
+----------------------------------------
+epochs: 100
+prop_epochs: 150
+lr: 0.001
+prop_lr: 0.01
+batch_size: 64
+embedding_k: 8
+gamma: 0.01
+G: 1
+
+All Metrics for Best Trial:
+----------------------------------------
+ECE: 0.202611
+BMSE: 1.212120
+DR_Bias: 0.001497
+DR_Variance: 0.000035
+MSE: 0.074851
+MAE: 0.200040
+training_time: 229.834459
+
+Top 5 Trials:
+----------------------------------------
+
+Trial 0:
+  ECE: 0.202611
+  epochs: 100
+  lr: 0.001
+  embedding_k: 8
+  gamma: 0.01
+  G: 1
+
+Trial 1:
+  ECE: 0.208516
+  epochs: 100
+  lr: 0.001
+  embedding_k: 8
+  gamma: 0.05
+  G: 8

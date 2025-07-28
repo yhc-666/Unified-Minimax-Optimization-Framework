@@ -171,11 +171,19 @@ def get_phi_normalized(model, x, device='cuda'):
 def load_data(data_dir: str = "data", verbose: bool = True) -> Tuple[np.ndarray, np.ndarray, int, int]:
     """Load ground truth data and compute propensity scores."""
     # Load ground truth
-    with open("semi-synthetic/data/synthetic_data", "rb") as f:
+    # Check if we're in the semi-synthetic directory or parent directory
+    if os.path.exists("data/synthetic_data"):
+        synthetic_path = "data/synthetic_data"
+        predicted_path = "data/predicted_matrix"
+    else:
+        synthetic_path = "semi-synthetic/data/synthetic_data"
+        predicted_path = "semi-synthetic/data/predicted_matrix"
+    
+    with open(synthetic_path, "rb") as f:
         ground_truth = pickle.load(f)
     
     # Load dimensions
-    with open("semi-synthetic/data/predicted_matrix", "rb") as f:
+    with open(predicted_path, "rb") as f:
         _ = pickle.load(f)  # predictions (not used)
         num_users = pickle.load(f)
         num_items = pickle.load(f)
@@ -420,13 +428,11 @@ def train_and_evaluate_model(model_name: str, data_splits: Dict, args) -> Tuple[
                          G=args.G,
                          verbose=args.verbose)
     
-    # Get test predictions
     x_test = data_splits['x_test']
     y_test = data_splits['y_test']
     y_test_binary = data_splits['y_test_binary']
     p_test = data_splits['p_test']
     
-    # Get predictions
     y_pred = model.predict(x_test)
     if not isinstance(y_pred, np.ndarray):
         y_pred = y_pred.numpy()
@@ -441,7 +447,6 @@ def train_and_evaluate_model(model_name: str, data_splits: Dict, args) -> Tuple[
     p_test_torch = torch.tensor(p_test, dtype=torch.float32).to(device)
     hat_p_test_torch = torch.tensor(hat_p_test, dtype=torch.float32).to(device)
     
-    # Clip propensity scores for stability
     p_test_torch = torch.clamp(p_test_torch, 1e-6, 1-1e-6)
     hat_p_test_torch = torch.clamp(hat_p_test_torch, 1e-6, 1-1e-6)
     

@@ -1,0 +1,2 @@
+trial_number,timestamp,objective_value,epochs,prop_epochs,lr,prop_lr,batch_size,embedding_k,gamma,G,verbose,test_ratio,unbiased_test_ratio,seed,save_results,bmse_weight,beta,ece_weight,n_bins,ECE,BMSE,DR_Bias,DR_Variance,MSE,MAE
+0,2025-07-28 17:45:23,,150,100,0.005,0.005,128,4,0.1,2,False,0.2,0.2,2024,,10,1.0,10.0,10,0.2011721432209015,0.15954895317554474,0.06261745095252991,1.7374559320160188e-05,0.06166218966245651,0.1884354203939438
