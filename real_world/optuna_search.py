@@ -64,7 +64,7 @@ HYPERPARAM_RANGES = {
         'abc_model_name': ['logistic_regression', 'mlp']
     },
     'kuai': {
-        'embedding_k': [416, 32, 64],
+        'embedding_k': [16, 32, 64],
         'embedding_k1': [16, 32, 64],
         'pred_lr': [0.005, 0.01],
         'impu_lr': [0.005, 0.01],
@@ -76,7 +76,7 @@ HYPERPARAM_RANGES = {
         'dis_lamb': (1e-4, 1e-1),
         'gamma': (0.01, 0.05),
         'beta': [0.01, 0.05, 0.1, 0.5, 1, 5, 10, 50, 100],
-        'G': [2, 4, 6, 8],
+        'G': [1, 2, 4, 6, 8, 10, 12],
         'num_bins': [5, 10, 15, 20],
         'batch_size': [4096],
         'abc_model_name': ['logistic_regression', 'mlp']
@@ -201,7 +201,7 @@ def objective(trial, args):
         'batch_size_prop': trial.suggest_categorical('batch_size', ranges['batch_size']),  # Same as batch_size
         'gamma': trial.suggest_float('gamma', *ranges['gamma']),
         'G': trial.suggest_categorical('G', ranges['G']),
-        'beta': trial.suggest_float('beta', *ranges['beta'], log=True),
+        'beta': trial.suggest_categorical('beta', ranges['beta']),
         'num_bins': trial.suggest_categorical('num_bins', ranges['num_bins']),
         'alpha': 0.5,  # Unused parameter
         'theta': 1     # Unused parameter
@@ -210,10 +210,10 @@ def objective(trial, args):
     model_args = {
         'embedding_k': trial.suggest_categorical('embedding_k', ranges['embedding_k']),
         'embedding_k1': trial.suggest_categorical('embedding_k1', ranges['embedding_k1']),
-        'pred_lr': trial.suggest_float('pred_lr', *ranges['pred_lr'], log=True),
-        'impu_lr': trial.suggest_float('impu_lr', *ranges['impu_lr'], log=True),
-        'prop_lr': trial.suggest_float('prop_lr', *ranges['prop_lr'], log=True),
-        'dis_lr': trial.suggest_float('dis_lr', *ranges['dis_lr'], log=True),
+        'pred_lr': trial.suggest_categorical('pred_lr', ranges['pred_lr']),
+        'impu_lr': trial.suggest_categorical('impu_lr', ranges['impu_lr']),
+        'prop_lr': trial.suggest_categorical('prop_lr', ranges['prop_lr']),
+        'dis_lr': trial.suggest_categorical('dis_lr', ranges['dis_lr']),
         'lamb_pred': trial.suggest_float('lamb_pred', *ranges['lamb_pred'], log=True),
         'lamb_imp': trial.suggest_float('lamb_imp', *ranges['lamb_imp'], log=True),
         'lamb_prop': trial.suggest_float('lamb_prop', *ranges['lamb_prop'], log=True),

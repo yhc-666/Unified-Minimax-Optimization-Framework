@@ -7,44 +7,44 @@ Number of Pareto optimal solutions: 1
 PARETO OPTIMAL SOLUTIONS
 ============================================================
 
-Pareto Solution #1 (Trial 1):
+Pareto Solution #1 (Trial 0):
 ----------------------------------------
 Objective values:
-  auc: 0.505948
+  auc: 0.593911
 
 All metrics:
-  mse: 0.250210
-  mae: 0.500135
-  auc: 0.505948
-  ndcg_5: 0.457823
-  precision_5: 0.403448
-  recall_5: 0.296728
-  f1_5: 0.341955
-  ndcg_10: 0.557993
-  precision_10: 0.408276
-  recall_10: 0.615684
-  f1_10: 0.490974
-  ndcg: 0.457823
-  precision: 0.403448
-  recall: 0.296728
-  f1: 0.341955
-  training_time: 3.860636
+  mse: 0.245808
+  mae: 0.494657
+  auc: 0.593911
+  ndcg_5: 0.564095
+  precision_5: 0.475172
+  recall_5: 0.379113
+  f1_5: 0.421742
+  ndcg_10: 0.633939
+  precision_10: 0.430345
+  recall_10: 0.654121
+  f1_10: 0.519145
+  ndcg: 0.564095
+  precision: 0.475172
+  recall: 0.379113
+  f1: 0.421742
+  training_time: 6.715036
 
 Parameters:
-  batch_size: 256
-  gamma: 0.08094481395760472
-  G: 4
-  beta: 0.2171201116670227
-  num_bins: 10
-  embedding_k: 8
-  embedding_k1: 8
-  pred_lr: 0.0057114490123577446
-  impu_lr: 0.006715915496350151
-  prop_lr: 0.007137151034448486
-  dis_lr: 0.006026438623078573
-  lamb_pred: 0.00619669540990506
-  lamb_imp: 5.772867120550046e-06
-  lamb_prop: 2.552113327420776e-05
-  dis_lamb: 0.48394493578469583
-  abc_model_name: mlp
+  batch_size: 128
+  gamma: 0.049451073154463954
+  G: 1
+  beta: 0.01
+  num_bins: 20
+  embedding_k: 64
+  embedding_k1: 32
+  pred_lr: 0.005
+  impu_lr: 0.005
+  prop_lr: 0.005
+  dis_lr: 0.01
+  lamb_pred: 0.008673275959550203
+  lamb_imp: 0.005628401799226312
+  lamb_prop: 0.010116961109173598
+  dis_lamb: 0.017861482756949088
+  abc_model_name: logistic_regression
 
