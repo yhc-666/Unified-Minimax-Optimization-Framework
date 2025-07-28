@@ -512,14 +512,34 @@ class MF_DR_JL(nn.Module):
     
 
 
-class MF_DR_DCE(MF_DR_JL):
+class MF_DR_DCE(nn.Module):
     """MF-DR with Doubly Robust estimation and Calibrated Expected (DCE) loss for propensity scores"""
     
     def __init__(self, num_users, num_items, batch_size, batch_size_prop, embedding_k=4, *args, **kwargs):
-        super().__init__(num_users, num_items, batch_size, batch_size_prop, embedding_k, *args, **kwargs)
+        super().__init__()
+        self.num_users = num_users
+        self.num_items = num_items
+        self.embedding_k = embedding_k
+        self.batch_size = batch_size
+        self.batch_size_prop = batch_size_prop
+        
+        # Initialize models same as MF_DR_JL
+        self.prediction_model = MF_BaseModel(
+            num_users=self.num_users, num_items=self.num_items, 
+            batch_size=self.batch_size, embedding_k=self.embedding_k, *args, **kwargs)
+        self.imputation_model = MF_BaseModel(
+            num_users=self.num_users, num_items=self.num_items, 
+            batch_size=self.batch_size, embedding_k=self.embedding_k)
+        self.propensity_model = NCF_BaseModel(
+            num_users=self.num_users, num_items=self.num_items, 
+            batch_size=self.batch_size, embedding_k=self.embedding_k, *args, **kwargs)
+        
+        self.sigmoid = torch.nn.Sigmoid()
+        self.xent_func = torch.nn.BCELoss()
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     def _compute_IPS(self, x, num_epoch=1000, lr=0.05, lamb=0, 
-                     tol=1e-4, verbose=False, ece_weight=0.1, n_bins=10):
+                     tol=1e-3, verbose=False, ece_weight=0.1, n_bins=10):
         """
         Compute propensity scores with ECE loss for better calibration
         
@@ -538,7 +558,7 @@ class MF_DR_DCE(MF_DR_JL):
                            shape=(self.num_users, self.num_items), dtype=np.float32).toarray().reshape(-1)
         optimizer_propensity = torch.optim.Adam(self.propensity_model.parameters(), lr=lr, weight_decay=lamb)
         
-        last_loss = 1e9
+        last_total_loss = 1e9  # Track combined loss for early stopping
         
         num_sample = len(obs)
         total_batch = num_sample // self.batch_size_prop
@@ -551,8 +571,9 @@ class MF_DR_DCE(MF_DR_JL):
             ul_idxs = np.arange(x_all.shape[0])
             np.random.shuffle(ul_idxs)
 
-            epoch_loss = 0
+            epoch_mse = 0
             epoch_ece = 0
+            epoch_total_loss = 0
 
             for idx in range(total_batch):
                 # mini-batch training
@@ -567,8 +588,8 @@ class MF_DR_DCE(MF_DR_JL):
                 # MSE loss
                 mse_loss = nn.MSELoss()(prop, sub_obs)
                 
-                # ECE loss
-                ece_loss = compute_ece_loss(prop, sub_obs, n_bins)
+                # ECE loss with equal-frequency binning
+                ece_loss = compute_ece_loss_equal_freq(prop, sub_obs, n_bins)
                 
                 # Combined loss
                 prop_loss = mse_loss + ece_weight * ece_loss
@@ -577,152 +598,301 @@ class MF_DR_DCE(MF_DR_JL):
                 prop_loss.backward()
                 optimizer_propensity.step()
                 
-                epoch_loss += mse_loss.detach().cpu().numpy()
+                epoch_mse += mse_loss.detach().cpu().numpy()
                 epoch_ece += ece_loss.detach().cpu().numpy()
+                epoch_total_loss += prop_loss.detach().cpu().numpy()
 
-            pbar.set_postfix({'mse_loss': epoch_loss, 'ece_loss': epoch_ece})
+            pbar.set_postfix({'mse': epoch_mse, 'ece': epoch_ece, 'total': epoch_total_loss})
             
-            relative_loss_div = (last_loss-epoch_loss)/(last_loss+1e-10)
+            # Early stopping based on combined loss
+            relative_loss_div = (last_total_loss - epoch_total_loss)/(last_total_loss + 1e-10)
             if  relative_loss_div < tol:
                 if early_stop > 5:
                     if verbose:
-                        print("\n[MF-DR-DCE-PS] epoch:{}, mse_loss:{}, ece_loss:{}".format(
-                            epoch, epoch_loss, epoch_ece))
+                        print("\n[MF-DR-DCE-PS] Early stopping based on combined loss convergence")
+                        print("[MF-DR-DCE-PS] epoch:{}, mse_loss:{}, ece_loss:{}, total_loss:{}".format(
+                            epoch, epoch_mse, epoch_ece, epoch_total_loss))
                     break
                 early_stop += 1
+            else:
+                early_stop = 0  # Reset early stop counter if improving
                 
-            last_loss = epoch_loss
+            last_total_loss = epoch_total_loss
 
             if epoch == num_epoch - 1:
-                print("[MF-DR-DCE-PS] Reach preset epochs, it seems does not converge.")
+                print("[MF-DR-DCE-PS] Reach preset epochs, combined loss may not have converged.")
     
     def fit(self, x, y, stop=5, num_epoch=1000, lr=0.05, lamb=0, gamma=0.1,
-            tol=1e-4, G=1, verbose=True, ece_weight=0.1, n_bins=10):
+            tol=1e-4, G=1, verbose=True, ece_weight=0.1, n_bins=10, 
+            prop_epochs=100, prop_lr=0.005):
         """
         Fit the model with ECE-regularized propensity scores
         
-        Additional Args:
+        Args:
+            x: Observed user-item pairs
+            y: Observed ratings
+            stop: Early stopping patience
+            num_epoch: Maximum training epochs
+            lr: Learning rate
+            lamb: L2 regularization
+            gamma: Propensity clipping threshold
+            tol: Early stopping tolerance
+            G: Ratio of unobserved to observed samples
+            verbose: Print progress
             ece_weight: Weight for ECE loss in propensity training
             n_bins: Number of bins for ECE calculation
+            prop_epochs: Number of epochs for propensity model training
+            prop_lr: Learning rate for propensity model
         """
         # First compute propensity scores with ECE loss
-        self._compute_IPS(x, num_epoch=num_epoch, lr=lr, lamb=lamb, 
+        self._compute_IPS(x, num_epoch=prop_epochs, lr=prop_lr, lamb=lamb, 
                          tol=tol, verbose=verbose, ece_weight=ece_weight, n_bins=n_bins)
         
-        # Then run the standard DR-JL training
-        super().fit(x, y, stop=stop, num_epoch=num_epoch, lr=lr, lamb=lamb, 
-                   gamma=gamma, tol=tol, G=G, verbose=verbose)
+        # Then run doubly robust training (same as MF_DR_JL)
+        optimizer_prediction = torch.optim.Adam(
+            self.prediction_model.parameters(), lr=lr, weight_decay=lamb)
+        optimizer_imputation = torch.optim.Adam(
+            self.imputation_model.parameters(), lr=lr, weight_decay=lamb)
+        
+        last_loss = 1e9
+        x_all = generate_total_sample(self.num_users, self.num_items)
+        num_sample = len(x) 
+        total_batch = num_sample // self.batch_size
+        early_stop = 0
+        
+        pbar = tqdm(range(num_epoch), desc="[MF-DR-DCE] Training", disable=not verbose)
+        for epoch in pbar: 
+            all_idx = np.arange(num_sample)
+            np.random.shuffle(all_idx)
+
+            # sampling counterfactuals
+            ul_idxs = np.arange(x_all.shape[0])
+            np.random.shuffle(ul_idxs)
+
+            epoch_loss = 0
+
+            for idx in range(total_batch):
+                # mini-batch training
+                selected_idx = all_idx[self.batch_size*idx:(idx+1)*self.batch_size]
+                sub_x = x[selected_idx] 
+                sub_y = y[selected_idx]
+
+                inv_prop = 1/torch.clip(self.propensity_model.forward(sub_x).detach(), gamma, 1)
+                sub_y = torch.Tensor(sub_y).to(self.device)
+                        
+                pred = self.prediction_model.forward(sub_x)
+                imputation_y = self.imputation_model.predict(sub_x).to(self.device)                
+                
+                x_sampled = x_all[ul_idxs[G*idx* self.batch_size : G*(idx+1)*self.batch_size]]
+                                       
+                pred_u = self.prediction_model.forward(x_sampled) 
+                imputation_y1 = self.imputation_model.predict(x_sampled).to(self.device)
+
+                xent_loss = F.binary_cross_entropy(pred, sub_y, weight=inv_prop, reduction="sum")
+                imputation_loss = F.binary_cross_entropy(pred, imputation_y, reduction="sum")
+                 
+                ips_loss = (xent_loss - imputation_loss)
+                                
+                # direct loss                
+                direct_loss = F.binary_cross_entropy(pred_u, imputation_y1, reduction="sum")
+                
+                loss = (ips_loss + direct_loss)/x_sampled.shape[0]
+
+                optimizer_prediction.zero_grad()
+                loss.backward()
+                optimizer_prediction.step()
+                                                           
+                epoch_loss += xent_loss.detach().cpu().numpy()                
+
+                # Update imputation model
+                pred = self.prediction_model.predict(sub_x).to(self.device)
+                imputation_y = self.imputation_model.forward(sub_x)
+
+                e_loss = F.binary_cross_entropy(pred, sub_y, reduction="none")
+                e_hat_loss = F.binary_cross_entropy(imputation_y, pred, reduction="none")
+                imp_loss = (((e_loss.detach() - e_hat_loss) ** 2) * inv_prop).sum()
+
+                optimizer_imputation.zero_grad()
+                imp_loss.backward()
+                optimizer_imputation.step()                
+                
+            relative_loss_div = (last_loss-epoch_loss)/(last_loss+1e-10)
+            if  relative_loss_div < tol:
+                if early_stop > stop:
+                    print("[MF-DR-DCE] epoch:{}, xent:{}".format(epoch, epoch_loss))
+                    break
+                else:
+                    early_stop += 1
+                
+            last_loss = epoch_loss
+
+            if epoch % 10 == 0 and verbose:
+                print("[MF-DR-DCE] epoch:{}, xent:{}".format(epoch, epoch_loss))
+
+            if epoch == num_epoch - 1:
+                print("[MF-DR-DCE] Reach preset epochs, it seems does not converge.")
+    
+    def predict(self, x):
+        """Make predictions for user-item pairs"""
+        pred = self.prediction_model.predict(x)
+        return pred.detach().cpu().numpy()
 
 
 class MF_DR_BMSE(MF_DR_JL):
-    """MF-DR with BMSE loss for propensity score learning"""
-    
-    def __init__(self, num_users, num_items, batch_size, batch_size_prop, embedding_k=4, 
-                 bmse_weight=1.0, *args, **kwargs):
-        super().__init__(num_users, num_items, batch_size, batch_size_prop, embedding_k, *args, **kwargs)
+    """
+    Matrix Factorization Doubly Robust with BMSE regularization.
+    Inherits from MF_DR_JL and adds BMSE loss to the prediction model.
+    """
+    def __init__(
+        self,
+        num_users,
+        num_items,
+        batch_size,
+        batch_size_prop,
+        embedding_k=4,
+        bmse_weight=1.0,
+        *args, **kwargs
+    ):
+        super().__init__(num_users, num_items, batch_size,
+                         batch_size_prop, embedding_k, *args, **kwargs)
         self.bmse_weight = bmse_weight
-    
-    def _get_phi_normalized(self, x):
-        """Extract and normalize prediction model features (logits)"""
-        self.prediction_model.eval()
-        with torch.no_grad():
-            if isinstance(x, np.ndarray):
-                x = torch.LongTensor(x).to(self.device)
-            
-            user_idx = x[:, 0]
-            item_idx = x[:, 1]
-            
-            # Get embeddings from prediction model
-            U_emb = self.prediction_model.W(user_idx)
-            V_emb = self.prediction_model.H(item_idx)
-            logits = torch.sum(U_emb.mul(V_emb), 1)
-            
-            # Normalize to [0, 1]
-            min_val = logits.min()
-            max_val = logits.max()
-            
-            if max_val - min_val < 1e-8:
-                phi = torch.full_like(logits, 0.5)
-            else:
-                phi = (logits - min_val) / (max_val - min_val)
-            
-            return phi.unsqueeze(1)
-    
-    def _compute_IPS(self, x, num_epoch=1000, lr=0.05, lamb=0, 
-                     tol=1e-4, verbose=False):
+
+    def get_phi(self, x):
         """
-        Compute propensity scores with BMSE regularization
+        φ(x) = σ(u^T v) mapped to [0,1] range for BMSE calculation
         """
-        print(f'[MF-DR-BMSE-PS] Computing IPS with BMSE weight={self.bmse_weight}')
+        if isinstance(x, np.ndarray):
+            x = torch.LongTensor(x).to(self.device)
+
+        user_idx, item_idx = x[:, 0], x[:, 1]
+        U_emb = self.prediction_model.W(user_idx)
+        V_emb = self.prediction_model.H(item_idx)
+        logits = torch.sum(U_emb.mul(V_emb), dim=1, keepdim=True)
+        return torch.sigmoid(logits)  # shape: (B,1)
+
+    def fit(self, x, y, stop=5,
+            num_epoch=1000, lr=0.05, lamb=0, gamma=0.1,
+            tol=1e-4, G=1, verbose=True):
+        """
+        Fit the model using MF_DR_JL's logic with additional BMSE regularization.
+        Propensity scores should be pre-computed using _compute_IPS().
+        """
         
-        obs = sps.csr_matrix((np.ones(x.shape[0]), (x[:, 0], x[:, 1])), 
-                           shape=(self.num_users, self.num_items), dtype=np.float32).toarray().reshape(-1)
-        optimizer_propensity = torch.optim.Adam(self.propensity_model.parameters(), lr=lr, weight_decay=lamb)
+        optimizer_prediction = torch.optim.Adam(
+            self.prediction_model.parameters(), lr=lr, weight_decay=lamb)
+        optimizer_imputation = torch.optim.Adam(
+            self.imputation_model.parameters(), lr=lr, weight_decay=lamb)
         
         last_loss = 1e9
-        
-        num_sample = len(obs)
-        total_batch = num_sample // self.batch_size_prop
         x_all = generate_total_sample(self.num_users, self.num_items)
+        num_sample = len(x)
+        total_batch = num_sample // self.batch_size
         early_stop = 0
         
-        pbar = tqdm(range(num_epoch), desc="[MF-DR-BMSE-PS] Computing IPS with BMSE", disable=not verbose)
+        pbar = tqdm(range(num_epoch), desc="[MF-DR-BMSE] Training", disable=not verbose)
         for epoch in pbar:
+            all_idx = np.arange(num_sample)
+            np.random.shuffle(all_idx)
+
+            # sampling counterfactuals
             ul_idxs = np.arange(x_all.shape[0])
             np.random.shuffle(ul_idxs)
-            
+
             epoch_loss = 0
-            epoch_bmse = 0
-            
+
             for idx in range(total_batch):
-                x_all_idx = ul_idxs[idx * self.batch_size_prop : (idx+1) * self.batch_size_prop]
+                # mini-batch training
+                selected_idx = all_idx[self.batch_size*idx:(idx+1)*self.batch_size]
+                sub_x = x[selected_idx]
+                sub_y = y[selected_idx]
+
+                # Get pre-trained propensity scores
+                inv_prop = 1/torch.clip(self.propensity_model.forward(sub_x).detach(), gamma, 1)
                 
-                x_sampled = x_all[x_all_idx]
-                prop = self.propensity_model.forward(x_sampled)
+                sub_y = torch.Tensor(sub_y).to(self.device)
                 
-                sub_obs = obs[x_all_idx]
-                sub_obs = torch.Tensor(sub_obs).to(self.device)
+                pred = self.prediction_model.forward(sub_x)
+                imputation_y = self.imputation_model.predict(sub_x).to(self.device)
                 
-                # MSE loss
-                mse_loss = nn.MSELoss()(prop, sub_obs)
+                x_sampled = x_all[ul_idxs[G*idx*self.batch_size : G*(idx+1)*self.batch_size]]
                 
-                # BMSE loss
-                # Clip propensity scores to avoid division by zero
-                prop_clipped = torch.clamp(prop, 1e-6, 1-1e-6)
+                pred_u = self.prediction_model.forward(x_sampled)
+                imputation_y1 = self.imputation_model.predict(x_sampled).to(self.device)
+
+                # Standard DR loss components
+                xent_loss = F.binary_cross_entropy(pred, sub_y, weight=inv_prop, reduction="sum")
+                imputation_loss = F.binary_cross_entropy(pred, imputation_y, reduction="sum")
+                ips_loss = xent_loss - imputation_loss
+                direct_loss = F.binary_cross_entropy(pred_u, imputation_y1, reduction="sum")
                 
-                # Get normalized prediction features
-                phi = self._get_phi_normalized(x_sampled)
+                # Calculate BMSE loss
+                # Get phi for observed samples
+                phi_obs = self.get_phi(sub_x)
+                # Clip propensity scores for numerical stability
+                p_hat_obs = torch.clip(self.propensity_model.forward(sub_x).detach(), gamma, 1)
                 
-                # Compute BMSE: ||E[(o/p - (1-o)/(1-p)) * φ]||²
-                term = (sub_obs / prop_clipped - (1 - sub_obs) / (1 - prop_clipped)).unsqueeze(1) * phi
-                bmse_loss = term.mean(dim=0).norm(p=2) ** 2
+                # Get phi for unobserved samples  
+                phi_unobs = self.get_phi(x_sampled)
+                p_hat_unobs = torch.clip(self.propensity_model.forward(x_sampled).detach(), gamma, 1)
                 
-                # Combined loss
-                total_loss = mse_loss + self.bmse_weight * bmse_loss
+                # Ensure propensity scores have correct shape
+                if len(p_hat_obs.shape) == 1:
+                    p_hat_obs = p_hat_obs.unsqueeze(1)
+                if len(p_hat_unobs.shape) == 1:
+                    p_hat_unobs = p_hat_unobs.unsqueeze(1)
                 
-                optimizer_propensity.zero_grad()
-                total_loss.backward()
-                optimizer_propensity.step()
+                # For observed samples (o=1): term = (1/p̂) * φ
+                term_obs = (1.0 / p_hat_obs) * phi_obs
                 
-                epoch_loss += mse_loss.detach().cpu().numpy()
-                epoch_bmse += bmse_loss.detach().cpu().numpy()
-            
-            pbar.set_postfix({'mse_loss': epoch_loss, 'bmse_loss': epoch_bmse})
-            
+                # For unobserved samples (o=0): term = -(1/(1-p̂)) * φ  
+                term_unobs = -(1.0 / (1 - p_hat_unobs)) * phi_unobs
+                
+                # Compute the average over all samples in D
+                # D = observed samples ∪ unobserved samples
+                total_samples = sub_x.shape[0] + x_sampled.shape[0]
+                avg_term = (term_obs.sum(dim=0) + term_unobs.sum(dim=0)) / total_samples
+                
+                # BMSE is the squared norm of the average
+                bmse_loss = avg_term.pow(2).sum()
+                
+                # Total loss for prediction model
+                loss = (ips_loss + direct_loss) / x_sampled.shape[0] + self.bmse_weight * bmse_loss
+
+                optimizer_prediction.zero_grad()
+                loss.backward()
+                optimizer_prediction.step()
+                
+                epoch_loss += xent_loss.detach().cpu().numpy()
+
+                # Update imputation model (same as parent)
+                pred = self.prediction_model.predict(sub_x).to(self.device)
+                imputation_y = self.imputation_model.forward(sub_x)
+
+                e_loss = F.binary_cross_entropy(pred, sub_y, reduction="none")
+                e_hat_loss = F.binary_cross_entropy(imputation_y, pred, reduction="none")
+                imp_loss = (((e_loss.detach() - e_hat_loss) ** 2) * inv_prop).sum()
+
+                optimizer_imputation.zero_grad()
+                imp_loss.backward()
+                optimizer_imputation.step()
+                
             relative_loss_div = (last_loss-epoch_loss)/(last_loss+1e-10)
-            if  relative_loss_div < tol:
-                if early_stop > 5:
-                    if verbose:
-                        print("\n[MF-DR-BMSE-PS] epoch:{}, mse_loss:{}, bmse_loss:{}".format(
-                            epoch, epoch_loss, epoch_bmse))
+            if relative_loss_div < tol:
+                if early_stop > stop:
+                    print("[MF-DR-BMSE] epoch:{}, xent:{}".format(epoch, epoch_loss))
                     break
-                early_stop += 1
+                else:
+                    early_stop += 1
                 
             last_loss = epoch_loss
-            
-            if epoch == num_epoch - 1:
-                print("[MF-DR-BMSE-PS] Reach preset epochs, it seems does not converge.")
 
+            if epoch % 10 == 0 and verbose:
+                print("[MF-DR-BMSE] epoch:{}, xent:{}".format(epoch, epoch_loss))
+
+            if epoch == num_epoch - 1:
+                print("[MF-DR-BMSE] Reach preset epochs, it seems does not converge.")
+    
+    # predict() method is inherited from parent class
 
 class MF_MRDR_JL(nn.Module):
     def __init__(self, num_users, num_items, batch_size, batch_size_prop, embedding_k=4, *args, **kwargs):
@@ -1103,21 +1273,62 @@ def compute_ece_loss(props, obs, n_bins=10):
     Returns:
         ece_loss: Expected calibration error
     """
-    # Sort by propensity scores
-    sorted_indices = torch.argsort(props)
-    sorted_props = props[sorted_indices]
-    sorted_obs = obs[sorted_indices]
-    
-    # Create equal-width bins
+    # Create equal-width bins (no sorting, to match evaluation)
     bin_boundaries = torch.linspace(0, 1, n_bins + 1, device=props.device)
-    bin_indices = torch.bucketize(sorted_props, bin_boundaries[1:-1], right=True)
+    # Use right=False and subtract 1 to match evaluation
+    bin_indices = torch.bucketize(props, bin_boundaries, right=False) - 1
+    # Clamp to valid range
+    bin_indices = torch.clamp(bin_indices, 0, n_bins - 1)
     
     ece_loss = 0.0
     for i in range(n_bins):
         mask = (bin_indices == i)
         if mask.sum() > 0:
-            bin_props = sorted_props[mask]
-            bin_obs = sorted_obs[mask]
+            bin_props = props[mask]
+            bin_obs = obs[mask]
+            # ECE: |avg(predicted) - avg(observed)|
+            bin_ece = torch.abs(bin_props.mean() - bin_obs.mean())
+            ece_loss += bin_ece * mask.sum() / props.shape[0]
+    
+    return ece_loss
+
+
+def compute_ece_loss_equal_freq(props, obs, n_bins=10):
+    """
+    Compute Expected Calibration Error loss using equal-frequency binning
+    
+    Args:
+        props: Predicted propensity scores
+        obs: Observed binary outcomes
+        n_bins: Number of bins for calibration
+    
+    Returns:
+        ece_loss: Expected calibration error
+    """
+    # Create equal-frequency bins using quantiles
+    # Generate quantile points (excluding 0 and 1)
+    quantiles = torch.linspace(0, 1, n_bins + 1, device=props.device)[1:-1]
+    
+    # Use equal_frequency_binning logic
+    boundaries = torch.quantile(props, quantiles)
+    
+    # Construct full boundaries (including min and max)
+    full_boundaries = torch.cat([
+        torch.tensor([float('-inf')], device=props.device), 
+        boundaries, 
+        torch.tensor([float('inf')], device=props.device)
+    ])
+    
+    # Assign bin indices using right=True to match equal_frequency_binning
+    bin_indices = torch.bucketize(props, full_boundaries, right=True) - 1
+    bin_indices = torch.clamp(bin_indices, 0, n_bins - 1)
+    
+    ece_loss = 0.0
+    for i in range(n_bins):
+        mask = (bin_indices == i)
+        if mask.sum() > 0:
+            bin_props = props[mask]
+            bin_obs = obs[mask]
             # ECE: |avg(predicted) - avg(observed)|
             bin_ece = torch.abs(bin_props.mean() - bin_obs.mean())
             ece_loss += bin_ece * mask.sum() / props.shape[0]

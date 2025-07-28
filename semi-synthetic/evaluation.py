@@ -107,7 +107,10 @@ def compute_dr_variance_torch(p_true: torch.Tensor,
 
 
 def get_phi_normalized(model, x, device='cuda'):
-    """Extract and normalize model prediction logits for BMSE calculation."""
+    """Extract model prediction features (phi) for BMSE calculation.
+    
+    Uses sigmoid(logits) to map to [0,1] range, consistent with MF_DR_BMSE implementation.
+    """
     model.eval()
     with torch.no_grad():
         if torch.is_tensor(x):
@@ -158,17 +161,8 @@ def get_phi_normalized(model, x, device='cuda'):
         if len(logits.shape) > 1:
             logits = logits.squeeze()
         
-        # Normalize to [0, 1]
-        min_val = logits.min()
-        max_val = logits.max()
-        
-        # Handle edge case where all values are the same
-        if max_val - min_val < 1e-8:
-            # Return 0.5 for all values if there's no variation
-            phi = torch.full_like(logits, 0.5)
-        else:
-            # Normalize to [0, 1]
-            phi = (logits - min_val) / (max_val - min_val)
+        # Use sigmoid to map logits to [0, 1] - consistent with MF_DR_BMSE
+        phi = torch.sigmoid(logits)
         
         return phi.unsqueeze(1)
 
@@ -364,15 +358,9 @@ def train_and_evaluate_model(model_name: str, data_splits: Dict, args) -> Tuple[
     y_train = data_splits['y_train']
     
     # 1. compute propensity scores
-    print("Computing propensity scores...")
-    if model_name == 'MF_DR_DCE':
-        model._compute_IPS(x_train, 
-                          num_epoch=args.prop_epochs, 
-                          lr=args.prop_lr,
-                          verbose=args.verbose,
-                          ece_weight=args.ece_weight,
-                          n_bins=args.n_bins)
-    else:
+    # For MF_DR_DCE, propensity scores are computed inside fit()
+    if model_name not in ['MF_DR_DCE']:
+        print("Computing propensity scores...")
         model._compute_IPS(x_train, 
                           num_epoch=args.prop_epochs, 
                           lr=args.prop_lr,
@@ -412,12 +400,25 @@ def train_and_evaluate_model(model_name: str, data_splits: Dict, args) -> Tuple[
                      verbose=args.verbose)
         else:
             # MF_DR_BIAS, MF_DR_BMSE, and MF_DR_DCE
-            model.fit(x_train, y_train,
-                     gamma=args.gamma,
-                     num_epoch=args.epochs,
-                     lr=args.lr,
-                     G=args.G,
-                     verbose=args.verbose)
+            if model_name == 'MF_DR_DCE':
+                # MF_DR_DCE needs additional ECE parameters
+                model.fit(x_train, y_train,
+                         gamma=args.gamma,
+                         num_epoch=args.epochs,
+                         lr=args.lr,
+                         G=args.G,
+                         verbose=args.verbose,
+                         ece_weight=args.ece_weight,
+                         n_bins=args.n_bins,
+                         prop_epochs=args.prop_epochs,
+                         prop_lr=args.prop_lr)
+            else:
+                model.fit(x_train, y_train,
+                         gamma=args.gamma,
+                         num_epoch=args.epochs,
+                         lr=args.lr,
+                         G=args.G,
+                         verbose=args.verbose)
     
     # Get test predictions
     x_test = data_splits['x_test']
@@ -444,8 +445,8 @@ def train_and_evaluate_model(model_name: str, data_splits: Dict, args) -> Tuple[
     p_test_torch = torch.clamp(p_test_torch, 1e-6, 1-1e-6)
     hat_p_test_torch = torch.clamp(hat_p_test_torch, 1e-6, 1-1e-6)
     
-    # 1. ECE
-    ece = compute_ece_torch(hat_p_test_torch, y_test_binary_torch, M=10, mode='equi_width')
+    # 1. ECE with equal-frequency binning
+    ece = compute_ece_torch(hat_p_test_torch, y_test_binary_torch, M=10, mode='equal_freq')
     
     # 2. BMSE
     phi = get_phi_normalized(model, x_test, device)
@@ -490,10 +491,10 @@ def main():
         description='Evaluate MF models with calibration metrics on semi-synthetic data')
     
     parser.add_argument('--models', nargs='+', 
-                       default=['MF_DR_DCE'],
+                       default=['MF_DR_BMSE', 'MF_DR_JL', 'MF_MRDR_JL', 'MF_Minimax', 'MF_DR_BIAS', 'MF_DR_DCE'],
                        choices=['MF_DR_JL', 'MF_MRDR_JL', 'MF_Minimax', 'MF_DR_BIAS', 'MF_DR_BMSE', 'MF_DR_DCE'],
                        help='Models to evaluate')
-    parser.add_argument('--epochs', type=int, default=1000,
+    parser.add_argument('--epochs', type=int, default=150,
                        help='Number of training epochs')
     parser.add_argument('--prop_epochs', type=int, default=100,
                        help='Number of epochs for propensity model')
@@ -513,7 +514,7 @@ def main():
                        help='Weight for adversarial loss (MF_Minimax only)')
     parser.add_argument('--bmse_weight', type=float, default=1,
                        help='Weight for BMSE loss (MF_DR_BMSE only)')
-    parser.add_argument('--ece_weight', type=float, default=1,
+    parser.add_argument('--ece_weight', type=float, default=10,
                        help='Weight for ECE loss (MF_DR_DCE only)')
     parser.add_argument('--n_bins', type=int, default=10,
                        help='Number of bins for ECE calculation (MF_DR_DCE only)')

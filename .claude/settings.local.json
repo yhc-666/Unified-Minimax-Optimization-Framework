@@ -11,7 +11,9 @@
       "Bash(cd:*)",
       "Bash(grep:*)",
       "Bash(cd:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(cp:*)",
+      "Bash(sed:*)"
     ],
     "deny": []
   }

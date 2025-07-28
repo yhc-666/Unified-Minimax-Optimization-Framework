@@ -63,12 +63,16 @@ def create_bar_chart(df_normalized, metrics, output_path='metric_comparison.png'
         values = [df_normalized.loc[df_normalized['model'] == model, metric].values[0] 
                  for metric in metrics]
         
-        ax.bar(positions, values, bar_width, label=model, color=colors[i])
+        # Add minimum bar height for visibility (2% of y-axis range)
+        min_bar_height = 0.02
+        values_with_min = [max(v, min_bar_height) for v in values]
+        
+        ax.bar(positions, values_with_min, bar_width, label=model, color=colors[i])
     
     # Customize the plot
     ax.set_xlabel('Metric', fontsize=16, fontweight='bold')
     ax.set_ylabel('Normalized Metric Value', fontsize=16, fontweight='bold')
-    ax.set_title('Controlling One Metric Does Not Control Others (Under Unmeasured Confounding)', 
+    ax.set_title('Controlling One Metric Does Not Control Others', 
                  fontsize=18, fontweight='bold', pad=20)
     
     # Set x-axis labels
@@ -88,7 +92,7 @@ def create_bar_chart(df_normalized, metrics, output_path='metric_comparison.png'
     ax.tick_params(axis='y', labelsize=12)
     
     # Add legend with better styling
-    legend = ax.legend(title='Penalty', bbox_to_anchor=(1.02, 1), loc='upper left', 
+    legend = ax.legend(title='Models', bbox_to_anchor=(1.02, 1), loc='upper left', 
                       frameon=True, fontsize=12)
     legend.get_title().set_fontsize(14)
     legend.get_title().set_fontweight('bold')
