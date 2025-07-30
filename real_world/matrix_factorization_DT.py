@@ -1235,7 +1235,7 @@ class MF_DR_BIAS(nn.Module):
             relative_loss_div = (last_loss-epoch_loss)/(last_loss+1e-10)
             if  relative_loss_div < tol:
                 if early_stop > 5:
-                    print("[MF-MRDR-JL] epoch:{}, xent:{}".format(epoch, epoch_loss))
+                    print("[MF-DR-BIAS] epoch:{}, xent:{}".format(epoch, epoch_loss))
                     break
                 early_stop += 1
                 
@@ -1245,7 +1245,7 @@ class MF_DR_BIAS(nn.Module):
                 pbar.set_postfix({'loss': epoch_loss})
 
             if epoch == num_epoch - 1:
-                print("[MF-MRDR-JL] Reach preset epochs, it seems does not converge.")
+                print("[MF-DR-BIAS] Reach preset epochs, it seems does not converge.")
 
     def predict(self, x):
         pred = self.prediction_model.predict(x)
@@ -1793,6 +1793,8 @@ def ECELoss(scores, labels, n_bins=15):
     return ece.cpu().data
 
 
+
+# time
 class MF_DR_JL_CE(nn.Module):
     def __init__(self, num_users, num_items, batch_size, batch_size_prop, num_experts, embedding_k=4, *args, **kwargs):
         super().__init__()
@@ -2096,4 +2098,351 @@ class MF_DR_JL_CE(nn.Module):
     def predict(self, x):
         pred = self.prediction_model.predict(x)
         return pred.detach().cpu().numpy()
+
+
+class MF_DRv2_BMSE_Imp(nn.Module):
+    """
+    Matrix Factorization with DR + BMSE from DRv2.py with imputation model.
+    Uses same MF architecture for all three models (base, imputation, propensity).
+    Joint training without separate propensity pre-training.
+    """
+    def __init__(self, num_users, num_items, batch_size, batch_size_prop,
+                 embedding_k=256, embedding_k1=256, embedding_k_prop=256,
+                 *args, **kwargs):
+        super().__init__()
+        self.num_users = num_users
+        self.num_items = num_items
+        self.batch_size = batch_size
+        self.batch_size_prop = batch_size_prop
+        
+        # All models use MF architecture
+        self.base_model = MF(num_users, num_items, batch_size, embedding_k=embedding_k1)
+        self.imputation_model = MF(num_users, num_items, batch_size, embedding_k=embedding_k1)
+        self.propensity_model = MF(num_users, num_items, batch_size, embedding_k=embedding_k_prop)
+        
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.base_model.to(self.device)
+        self.imputation_model.to(self.device)
+        self.propensity_model.to(self.device)
+        
+        self.sigmoid = torch.nn.Sigmoid()
+        
+    def fit(self, x, y, num_epoch=500, lr=0.005, impu_lr=0.005, prop_lr=0.005,
+            lamb=1e-5, lamb_imp=1e-6, lamb_prop=1e-1,
+            alpha=1, beta=2, gamma=0.1, imputation=1e-3,
+            tol=1e-4, early_stop_rounds=10, verbose=True):
+        """
+        Fit the model using joint training approach from DRv2.py.
+        
+        Parameters match DRv2.py loss_args:
+        - alpha: weight for ctcvr_loss
+        - beta: weight for cvr_loss_mnar
+        - gamma: weight for bmse_loss
+        - imputation: weight for loss_imp
+        """
+        
+        # Create optimizers
+        base_optimizer = torch.optim.Adam(
+            self.base_model.parameters(), lr=lr, weight_decay=lamb)
+        imputation_optimizer = torch.optim.Adam(
+            self.imputation_model.parameters(), lr=impu_lr, weight_decay=lamb_imp)
+        propensity_optimizer = torch.optim.Adam(
+            self.propensity_model.parameters(), lr=prop_lr, weight_decay=lamb_prop)
+        
+        # Loss functions
+        none_criterion = nn.MSELoss(reduction='none')
+        mean_criterion = nn.MSELoss()
+        
+        # Create matrices for batch processing (following DRv2.py approach)
+        x_tensor = torch.LongTensor(x).to(self.device)
+        y_tensor = torch.FloatTensor(y).to(self.device)
+        
+        # Create observed matrix
+        obs_matrix = torch.zeros(self.num_users, self.num_items).to(self.device)
+        obs_matrix[x[:, 0], x[:, 1]] = 1
+        
+        # Create rating matrix
+        rating_matrix = torch.zeros(self.num_users, self.num_items).to(self.device)
+        rating_matrix[x[:, 0], x[:, 1]] = y_tensor
+        
+        num_sample = len(x)
+        total_batch = num_sample // self.batch_size
+        
+        last_loss = 1e9
+        early_stop = 0
+        
+        for epoch in range(num_epoch):
+            all_idx = np.arange(num_sample)
+            np.random.shuffle(all_idx)
+            
+            epoch_loss = 0
+            
+            for idx in range(total_batch):
+                # Get batch
+                selected_idx = all_idx[self.batch_size*idx:(idx+1)*self.batch_size]
+                sub_x = x[selected_idx]
+                sub_y = y[selected_idx]
+                
+                # Get all user-item pairs in the batch block
+                batch_users = np.unique(sub_x[:, 0])
+                batch_items = np.unique(sub_x[:, 1])
+                
+                # Create all pairs
+                users_all, items_all = np.meshgrid(batch_users, batch_items, indexing='ij')
+                users_all = users_all.flatten()
+                items_all = items_all.flatten()
+                
+                # Get sub-matrices
+                sub_obs = obs_matrix[batch_users][:, batch_items].flatten()
+                sub_ratings = rating_matrix[batch_users][:, batch_items].flatten()
+                
+                # Convert to tensors
+                users_all = torch.LongTensor(users_all).to(self.device)
+                items_all = torch.LongTensor(items_all).to(self.device)
+                sub_obs = sub_obs.to(self.device)
+                sub_ratings = sub_ratings.to(self.device)
+                
+                # Set models to train mode
+                self.base_model.train()
+                self.imputation_model.train()
+                self.propensity_model.train()
+                
+                # Forward pass
+                p_hat = torch.sigmoid(self.propensity_model.forward(
+                    torch.stack([users_all, items_all], dim=1)))
+                r_hat = torch.sigmoid(self.base_model.forward(
+                    torch.stack([users_all, items_all], dim=1)))
+                
+                # Compute losses (following DRv2.py exactly)
+                e_true = none_criterion(r_hat, sub_ratings)
+                r_tilde = self.imputation_model.forward(
+                    torch.stack([users_all, items_all], dim=1))
+                e_hat = none_criterion(r_hat, torch.sigmoid(r_tilde))
+                cost_e = none_criterion(e_hat, e_true)
+                loss_imp = torch.mean(torch.multiply(sub_obs, torch.divide(cost_e, p_hat)))
+                
+                ctr_loss = mean_criterion(p_hat, sub_obs)
+                ctcvr_loss = mean_criterion(
+                    torch.multiply(p_hat, r_hat), 
+                    torch.multiply(sub_obs, sub_ratings))
+                cvr_loss_mnar = torch.mean(torch.add(
+                    e_hat, 
+                    torch.divide(torch.multiply(sub_obs, e_true - e_hat), p_hat)))
+                
+                # BMSE loss (exact implementation from DRv2.py)
+                ones_all = torch.ones(len(p_hat)).to(self.device)
+                w_all = torch.divide(sub_obs, p_hat) - torch.divide(
+                    (ones_all - sub_obs), (ones_all - p_hat))
+                bmse_loss = (torch.mean(w_all * r_hat)) ** 2
+                
+                # Total loss
+                loss = (ctr_loss + 
+                        alpha * ctcvr_loss + 
+                        beta * cvr_loss_mnar + 
+                        imputation * loss_imp + 
+                        gamma * bmse_loss)
+                
+                # Backward and optimize
+                base_optimizer.zero_grad()
+                imputation_optimizer.zero_grad()
+                propensity_optimizer.zero_grad()
+                loss.backward()
+                base_optimizer.step()
+                imputation_optimizer.step()
+                propensity_optimizer.step()
+                
+                epoch_loss += loss.detach().cpu().numpy()
+            
+            # Check convergence
+            relative_loss_div = abs(last_loss - epoch_loss) / (last_loss + 1e-10)
+            if relative_loss_div < tol:
+                if early_stop >= early_stop_rounds:
+                    if verbose:
+                        print(f"\n[MF-DRv2-BMSE-Imp] Early stop at epoch {epoch}, loss: {epoch_loss}")
+                    break
+                else:
+                    early_stop += 1
+            else:
+                early_stop = 0
+                
+            last_loss = epoch_loss
+            
+            if epoch % 10 == 0 and verbose:
+                print(f"[MF-DRv2-BMSE-Imp] epoch: {epoch}, loss: {epoch_loss}")
+                
+    def predict(self, x):
+        self.base_model.eval()
+        with torch.no_grad():
+            x = torch.LongTensor(x).to(self.device)
+            pred = torch.sigmoid(self.base_model.forward(x))
+        return pred.detach().cpu().numpy()
+    
+    def _compute_IPS(self, x, *args, **kwargs):
+        """No separate IPS computation - joint training instead"""
+        pass
+
+
+class MF_DRv2_BMSE(nn.Module):
+    """
+    Matrix Factorization with DR + BMSE from DRv2.py without imputation model.
+    Uses same MF architecture for both models (base, propensity).
+    Joint training without separate propensity pre-training.
+    """
+    def __init__(self, num_users, num_items, batch_size, batch_size_prop,
+                 embedding_k=256, embedding_k1=256, *args, **kwargs):
+        super().__init__()
+        self.num_users = num_users
+        self.num_items = num_items
+        self.batch_size = batch_size
+        self.batch_size_prop = batch_size_prop
+        
+        # Both models use MF architecture
+        self.base_model = MF(num_users, num_items, batch_size, embedding_k=embedding_k1)
+        self.propensity_model = MF(num_users, num_items, batch_size, embedding_k=embedding_k)
+        
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.base_model.to(self.device)
+        self.propensity_model.to(self.device)
+        
+        self.sigmoid = torch.nn.Sigmoid()
+        
+    def fit(self, x, y, num_epoch=500, lr=0.01, prop_lr=0.01,
+            lamb=1e-5, lamb_prop=1e-1,
+            alpha=1, beta=1, gamma=0.01,
+            tol=1e-4, early_stop_rounds=10, verbose=True):
+        """
+        Fit the model using joint training approach from DRv2.py (no imputation version).
+        
+        Parameters match DRv2.py loss_args:
+        - alpha: weight for ctcvr_loss
+        - beta: weight for cvr_loss_mnar
+        - gamma: weight for bmse_loss
+        """
+        
+        # Create optimizers
+        base_optimizer = torch.optim.Adam(
+            self.base_model.parameters(), lr=lr, weight_decay=lamb)
+        propensity_optimizer = torch.optim.Adam(
+            self.propensity_model.parameters(), lr=prop_lr, weight_decay=lamb_prop)
+        
+        # Loss functions
+        none_criterion = nn.MSELoss(reduction='none')
+        mean_criterion = nn.MSELoss()
+        
+        # Create matrices for batch processing (following DRv2.py approach)
+        x_tensor = torch.LongTensor(x).to(self.device)
+        y_tensor = torch.FloatTensor(y).to(self.device)
+        
+        # Create observed matrix
+        obs_matrix = torch.zeros(self.num_users, self.num_items).to(self.device)
+        obs_matrix[x[:, 0], x[:, 1]] = 1
+        
+        # Create rating matrix
+        rating_matrix = torch.zeros(self.num_users, self.num_items).to(self.device)
+        rating_matrix[x[:, 0], x[:, 1]] = y_tensor
+        
+        num_sample = len(x)
+        total_batch = num_sample // self.batch_size
+        
+        last_loss = 1e9
+        early_stop = 0
+        
+        for epoch in range(num_epoch):
+            all_idx = np.arange(num_sample)
+            np.random.shuffle(all_idx)
+            
+            epoch_loss = 0
+            
+            for idx in range(total_batch):
+                # Get batch
+                selected_idx = all_idx[self.batch_size*idx:(idx+1)*self.batch_size]
+                sub_x = x[selected_idx]
+                sub_y = y[selected_idx]
+                
+                # Get all user-item pairs in the batch block
+                batch_users = np.unique(sub_x[:, 0])
+                batch_items = np.unique(sub_x[:, 1])
+                
+                # Create all pairs
+                users_all, items_all = np.meshgrid(batch_users, batch_items, indexing='ij')
+                users_all = users_all.flatten()
+                items_all = items_all.flatten()
+                
+                # Get sub-matrices
+                sub_obs = obs_matrix[batch_users][:, batch_items].flatten()
+                sub_ratings = rating_matrix[batch_users][:, batch_items].flatten()
+                
+                # Convert to tensors
+                users_all = torch.LongTensor(users_all).to(self.device)
+                items_all = torch.LongTensor(items_all).to(self.device)
+                sub_obs = sub_obs.to(self.device)
+                sub_ratings = sub_ratings.to(self.device)
+                
+                # Set models to train mode
+                self.base_model.train()
+                self.propensity_model.train()
+                
+                # Forward pass
+                p_hat = torch.sigmoid(self.propensity_model.forward(
+                    torch.stack([users_all, items_all], dim=1)))
+                r_hat = torch.sigmoid(self.base_model.forward(
+                    torch.stack([users_all, items_all], dim=1)))
+                
+                # Compute losses (following DRv2.py exactly - no imputation version)
+                ctr_loss = mean_criterion(p_hat, sub_obs)
+                ctcvr_loss = mean_criterion(
+                    torch.multiply(p_hat, r_hat), 
+                    torch.multiply(sub_obs, sub_ratings))
+                cvr_loss_mnar = none_criterion(r_hat, sub_ratings)
+                cvr_loss_mnar = torch.mean(torch.divide(
+                    torch.multiply(sub_obs, cvr_loss_mnar), p_hat))
+                
+                # BMSE loss (exact implementation from DRv2.py)
+                ones_all = torch.ones(len(p_hat)).to(self.device)
+                w_all = torch.divide(sub_obs, p_hat) - torch.divide(
+                    (ones_all - sub_obs), (ones_all - p_hat))
+                bmse_loss = (torch.mean(w_all * r_hat)) ** 2
+                
+                # Total loss
+                loss = (ctr_loss + 
+                        alpha * ctcvr_loss + 
+                        beta * cvr_loss_mnar + 
+                        gamma * bmse_loss)
+                
+                # Backward and optimize
+                base_optimizer.zero_grad()
+                propensity_optimizer.zero_grad()
+                loss.backward()
+                base_optimizer.step()
+                propensity_optimizer.step()
+                
+                epoch_loss += loss.detach().cpu().numpy()
+            
+            # Check convergence
+            relative_loss_div = abs(last_loss - epoch_loss) / (last_loss + 1e-10)
+            if relative_loss_div < tol:
+                if early_stop >= early_stop_rounds:
+                    if verbose:
+                        print(f"\n[MF-DRv2-BMSE] Early stop at epoch {epoch}, loss: {epoch_loss}")
+                    break
+                else:
+                    early_stop += 1
+            else:
+                early_stop = 0
+                
+            last_loss = epoch_loss
+            
+            if epoch % 10 == 0 and verbose:
+                print(f"[MF-DRv2-BMSE] epoch: {epoch}, loss: {epoch_loss}")
+                
+    def predict(self, x):
+        self.base_model.eval()
+        with torch.no_grad():
+            x = torch.LongTensor(x).to(self.device)
+            pred = torch.sigmoid(self.base_model.forward(x))
+        return pred.detach().cpu().numpy()
+    
+    def _compute_IPS(self, x, *args, **kwargs):
+        """No separate IPS computation - joint training instead"""
+        pass
     

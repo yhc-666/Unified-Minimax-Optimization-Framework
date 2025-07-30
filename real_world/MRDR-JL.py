@@ -53,11 +53,12 @@ def train_and_eval(dataset_name, train_args, model_args):
 
     "MRDR-JL"
     mf = MF_MRDR_JL(num_user, num_item, embedding_k=model_args['embedding_k'], batch_size=train_args['batch_size'], batch_size_prop = train_args['batch_size_prop'])
-    mf.cuda()
+    if torch.cuda.is_available():
+        mf.cuda()
     mf._compute_IPS(x_train, lr =model_args['lr_prop'], lamb = model_args['lamb_prop'])
     mf.fit(x_train, y_train, 
         lr=model_args['lr_pred'],
-        lamb_pred=model_args['lamb_pred'],
+        lamb=model_args['lamb_pred'],
         gamma = train_args['gamma'])
 
     test_pred = mf.predict(x_test)

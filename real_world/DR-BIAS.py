@@ -52,16 +52,14 @@ def train_and_eval(dataset_name, train_args, model_args):
         y_test = binarize(y_test)
 
     "DR-BIAS"
-    mf = MF_DR_BIAS(num_user, num_item)
-    mf.cuda()
-    ips_idxs = np.arange(len(y_test))
-    np.random.shuffle(ips_idxs)
-    y_ips = y_test[ips_idxs[:int(0.05 * len(ips_idxs))]]
+    mf = MF_DR_BIAS(num_user, num_item,
+                    batch_size=train_args['batch_size'],
+                    batch_size_prop=train_args.get('batch_size_prop', 1024))
+    if torch.cuda.is_available():
+        mf.cuda()
     mf.fit(x_train, y_train, 
-        y_ips=y_ips,
         lr=model_args['lr'], 
-        batch_size=train_args['batch_size'],
-        lamb = model_args['lamb'])
+        lamb=model_args['lamb'])
 
     test_pred = mf.predict(x_test)
     mse_mf = mse_func(y_test, test_pred)
@@ -89,13 +87,13 @@ def train_and_eval(dataset_name, train_args, model_args):
 
 def para(args):
     if args.dataset=="coat":
-        args.train_args = {"batch_size":128}
+        args.train_args = {"batch_size":128, "batch_size_prop": 1024}
         args.model_args = {"lr":0.05, "lamb": 1e-3}
     elif args.dataset=="yahoo":
-        args.train_args = {"batch_size":2048}
+        args.train_args = {"batch_size":2048, "batch_size_prop": 32764}
         args.model_args = {"lr":0.05, "lamb": 1e-4}
     elif args.dataset=="kuai":
-        args.train_args = {"batch_size":2048}
+        args.train_args = {"batch_size":2048, "batch_size_prop": 32764}
         args.model_args = {"lr":0.05, "lamb": 1e-4}
     return args
 
