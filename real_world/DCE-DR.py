@@ -3,6 +3,7 @@ import numpy as np
 import torch
 from sklearn.metrics import roc_auc_score
 import arguments
+import time
 
 from dataset import load_data
 from matrix_factorization_DT import MF_DR_JL_CE
@@ -11,6 +12,39 @@ from utils import gini_index, ndcg_func, get_user_wise_ctr, rating_mat_to_sample
 mse_func = lambda x,y: np.mean((x-y)**2)
 acc_func = lambda x,y: np.sum(x == y) / len(x)
 mae_func = lambda x,y: np.mean(np.abs(x-y))
+
+
+def count_parameters(model):
+    """Count trainable parameters in the model and its components"""
+    total_params = 0
+    param_details = {}
+    
+    # Count parameters for each component
+    if hasattr(model, 'prediction_model'):
+        pred_params = sum(p.numel() for p in model.prediction_model.parameters() if p.requires_grad)
+        param_details['Prediction Model'] = pred_params
+        total_params += pred_params
+    
+    if hasattr(model, 'imputation_model'):
+        impu_params = sum(p.numel() for p in model.imputation_model.parameters() if p.requires_grad)
+        param_details['Imputation Model'] = impu_params
+        total_params += impu_params
+    
+    if hasattr(model, 'propensity_model'):
+        prop_params = sum(p.numel() for p in model.propensity_model.parameters() if p.requires_grad)
+        param_details['Propensity Model'] = prop_params
+        total_params += prop_params
+    
+    # Count calibration parameters
+    if hasattr(model, 'prop_selection_net'):
+        cal_params = sum(p.numel() for p in model.prop_selection_net.parameters() if p.requires_grad)
+        cal_params += sum(p.numel() for p in model.imp_selection_net.parameters() if p.requires_grad)
+        cal_params += model.a_prop.numel() + model.b_prop.numel()
+        cal_params += model.a_imp.numel() + model.b_imp.numel()
+        param_details['Calibration Components'] = cal_params
+        total_params += cal_params
+    
+    return total_params, param_details
 
 
 def train_and_eval(dataset_name, train_args, model_args):
@@ -57,23 +91,35 @@ def train_and_eval(dataset_name, train_args, model_args):
     y_train = y_train[:n_train]
 
     "MF-DR-JL-CE"
+    # Start timing for model initialization
+    init_start_time = time.time()
+    
     mf = MF_DR_JL_CE(num_user, num_item, 
                      batch_size=train_args['batch_size'], 
                      batch_size_prop=train_args['batch_size_prop'],
                      num_experts=model_args['num_experts'],
                      embedding_k=model_args['embedding_k'])
     
+    init_time = time.time() - init_start_time
+    
+    # Count parameters
+    total_params, param_details = count_parameters(mf)
+    
     # First compute propensity scores
     print("Stage 1: Computing propensity scores...")
+    prop_start_time = time.time()
     mf._compute_IPS(x_train, 
                     num_epoch=200,
                     lr=model_args['lr_prop'], 
                     lamb=model_args['lamb_prop'],
                     verbose=True)
+    prop_time = time.time() - prop_start_time
     
     # Then calibrate propensity scores
+    cal_time = 0
     if train_args.get('calibrate_prop', True):
         print("Stage 2: Calibrating propensity scores...")
+        cal_start_time = time.time()
         mf._calibrate_IPS_G(x_val, x_test,
                             num_epoch=model_args.get('cal_epochs', 100),
                             lr=model_args.get('lr_cal', 0.01),
@@ -81,9 +127,11 @@ def train_and_eval(dataset_name, train_args, model_args):
                             end_T=train_args.get('end_T', 1e-3),
                             verbose=True,
                             G=train_args.get('G_cal', 10))
+        cal_time = time.time() - cal_start_time
     
     # Finally train the prediction and imputation models
     print("Stage 3: Training prediction and imputation models...")
+    train_start_time = time.time()
     mf.fit(x_train, y_train, x_val, y_val,
            stop=train_args.get('stop', 5),
            num_epoch=train_args.get('num_epoch', 1000),
@@ -100,6 +148,9 @@ def train_and_eval(dataset_name, train_args, model_args):
            iter_impcal=train_args.get('iter_impcal', 10),
            verbose=True,
            cal=train_args.get('cal_imp', True))
+    
+    train_time = time.time() - train_start_time
+    total_time = init_time + prop_time + cal_time + train_time
 
     test_pred = mf.predict(x_test)
     mse_mf = mse_func(y_test, test_pred)
@@ -133,6 +184,22 @@ def train_and_eval(dataset_name, train_args, model_args):
     user_wise_ctr = get_user_wise_ctr(x_test, y_test, test_pred)
     gi, gu = gini_index(user_wise_ctr)
     print("***"*5 + "[MF-DR-JL-CE]" + "***"*5)
+    
+    # Print complexity analysis
+    print("\n" + "="*50)
+    print("[MF-DR-JL-CE] Complexity Analysis:")
+    print("="*50)
+    print(f"Total Parameters: {total_params:,}")
+    for component, params in param_details.items():
+        print(f"  - {component}: {params:,}")
+    
+    print(f"\nTraining Time:")
+    print(f"  - Model Initialization: {init_time:.2f} seconds")
+    print(f"  - Propensity Pre-training: {prop_time:.2f} seconds")
+    print(f"  - Propensity Calibration: {cal_time:.2f} seconds")
+    print(f"  - Main Training: {train_time:.2f} seconds")
+    print(f"  - Total Time: {total_time:.2f} seconds")
+    print("="*50 + "\n")
 
 
 def para(args):
@@ -153,16 +220,16 @@ def para(args):
             "iter_impcal": 10               # Iterations for imputation calibration per epoch
         }
         args.model_args = {
-            "embedding_k": 8,               # Embedding dimension
+            "embedding_k": 32,               # Embedding dimension
             "num_experts": 5,               # Number of calibration experts
-            "lr_pred": 0.01,                # Learning rate for prediction model
+            "lr_pred": 0.05,                # Learning rate for prediction model
             "lr_imp": 0.01,                 # Learning rate for imputation model
-            "lr_prop": 0.01,                # Learning rate for propensity model
+            "lr_prop": 0.05,                # Learning rate for propensity model
             "lr_cal": 0.01,                 # Learning rate for calibration
             "lr_impcal": 0.05,              # Learning rate for imputation calibration
-            "lamb_prop": 1e-1,              # Weight decay for propensity model
-            "lamb_pred": 1e-3,              # Weight decay for prediction model
-            "lamb_imp": 1e-3,               # Weight decay for imputation model
+            "lamb_prop": 0.001,              # Weight decay for propensity model
+            "lamb_pred": 0.005,              # Weight decay for prediction model
+            "lamb_imp": 0.0001,               # Weight decay for imputation model
             "lamb_cal": 0,                  # Weight decay for calibration
             "lamb_impcal": 0,               # Weight decay for imputation calibration
             "cal_epochs": 100               # Epochs for calibration
@@ -170,7 +237,7 @@ def para(args):
     elif args.dataset == "yahoo":
         args.train_args = {
             "batch_size": 4096,             # Larger batch size for larger dataset
-            "batch_size_prop": 32764,       # Batch size for propensity model
+            "batch_size_prop": 4096,        # Unified with Minimax
             "gamma": 0.05,                  # Same propensity clipping
             "G": 1,                         # Same exploration ratio
             "G_cal": 10,                    # G for calibration
@@ -183,11 +250,11 @@ def para(args):
             "iter_impcal": 10               # Imputation calibration iterations
         }
         args.model_args = {
-            "embedding_k": 32,              # Larger embeddings for larger dataset
+            "embedding_k": 16,              # Larger embeddings for larger dataset
             "num_experts": 10,              # More experts for larger dataset
-            "lr_pred": 0.01,                # Learning rate for prediction
-            "lr_imp": 0.01,                 # Learning rate for imputation
-            "lr_prop": 0.01,                # Learning rate for propensity
+            "lr_pred": 0.005,               # Unified with Minimax pred_lr
+            "lr_imp": 0.01,                 # Unified with Minimax impu_lr
+            "lr_prop": 0.005,               # Unified with Minimax prop_lr
             "lr_cal": 0.01,                 # Learning rate for calibration
             "lr_impcal": 0.05,              # Learning rate for imputation calibration
             "lamb_prop": 1e-4,              # Weight decay for propensity

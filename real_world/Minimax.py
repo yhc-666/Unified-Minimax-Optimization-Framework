@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import arguments
 from tqdm import tqdm
+import time
 
 from dataset import load_data
 from matrix_factorization_DT import generate_total_sample, MF_Minimax
@@ -15,6 +16,35 @@ from utils import gini_index, ndcg_func, get_user_wise_ctr, rating_mat_to_sample
 mse_func = lambda x,y: np.mean((x-y)**2)
 acc_func = lambda x,y: np.sum(x == y) / len(x)
 mae_func = lambda x,y: np.mean(np.abs(x-y))
+
+
+def count_parameters(model):
+    """Count trainable parameters in the model and its components"""
+    total_params = 0
+    param_details = {}
+    
+    # Count parameters for each component
+    if hasattr(model, 'model_pred'):
+        pred_params = sum(p.numel() for p in model.model_pred.parameters() if p.requires_grad)
+        param_details['Prediction Model'] = pred_params
+        total_params += pred_params
+    
+    if hasattr(model, 'model_impu'):
+        impu_params = sum(p.numel() for p in model.model_impu.parameters() if p.requires_grad)
+        param_details['Imputation Model'] = impu_params
+        total_params += impu_params
+    
+    if hasattr(model, 'model_prop'):
+        prop_params = sum(p.numel() for p in model.model_prop.parameters() if p.requires_grad)
+        param_details['Propensity Model'] = prop_params
+        total_params += prop_params
+    
+    if hasattr(model, 'model_abc'):
+        abc_params = sum(p.numel() for p in model.model_abc.parameters() if p.requires_grad)
+        param_details['Discriminator Model'] = abc_params
+        total_params += abc_params
+    
+    return total_params, param_details
 
 
 def train_and_eval(dataset_name, train_args, model_args):
@@ -54,19 +84,30 @@ def train_and_eval(dataset_name, train_args, model_args):
         y_test = binarize(y_test)
 
     "Minimax"
+    # Start timing for model initialization
+    init_start_time = time.time()
+    
     mf = MF_Minimax(num_user, num_item, batch_size=train_args['batch_size'], batch_size_prop=train_args['batch_size_prop'],
                     embedding_k=model_args['embedding_k'], embedding_k1=model_args['embedding_k1'],
                     abc_model_name=model_args.get('abc_model_name', 'logistic_regression'),
                     copy_model_pred=model_args.get('copy_model_pred', 1))
     
+    init_time = time.time() - init_start_time
+    
+    # Count parameters
+    total_params, param_details = count_parameters(mf)
+    
     # First compute propensity scores
+    prop_start_time = time.time()
     mf._compute_IPS(x_train, 
                     num_epoch=200,  # Fixed for propensity pre-training
                     lr=model_args.get('prop_lr', 0.01), 
                     lamb=model_args.get('prop_lamb', 0),
                     verbose=True)
+    prop_time = time.time() - prop_start_time
     
     # Then train the full model
+    train_start_time = time.time()
     mf.fit(x_train, y_train, 
            pred_lr=model_args['pred_lr'], 
            impu_lr=model_args['impu_lr'],
@@ -82,6 +123,9 @@ def train_and_eval(dataset_name, train_args, model_args):
            G=train_args["G"],
            gamma=train_args['gamma'],
            num_bins=train_args.get('num_bins', 10))
+    train_time = time.time() - train_start_time
+    
+    total_time = init_time + prop_time + train_time
 
     test_pred = mf.predict(x_test)
     mse_mf = mse_func(y_test, test_pred)
@@ -115,6 +159,21 @@ def train_and_eval(dataset_name, train_args, model_args):
     user_wise_ctr = get_user_wise_ctr(x_test,y_test,test_pred)
     gi,gu = gini_index(user_wise_ctr)
     print("***"*5 + "[Minimax]" + "***"*5)
+    
+    # Print complexity analysis
+    print("\n" + "="*50)
+    print("[Minimax] Complexity Analysis:")
+    print("="*50)
+    print(f"Total Parameters: {total_params:,}")
+    for component, params in param_details.items():
+        print(f"  - {component}: {params:,}")
+    
+    print(f"\nTraining Time:")
+    print(f"  - Model Initialization: {init_time:.2f} seconds")
+    print(f"  - Propensity Pre-training: {prop_time:.2f} seconds")
+    print(f"  - Main Training: {train_time:.2f} seconds")
+    print(f"  - Total Time: {total_time:.2f} seconds")
+    print("="*50 + "\n")
 
 
 def para(args):
@@ -123,25 +182,25 @@ def para(args):
         args.train_args = {
             "batch_size": 128,              # Mini-batch size for training prediction/imputation models
             "batch_size_prop": 128,         # Mini-batch size for training propensity model
-            "gamma": 0.05,                  # Propensity score clipping threshold (clips to [gamma, 1.0] to avoid extreme weights)
-            "G": 4,                         # Ratio of unobserved to observed samples (controls exploration in DR estimator)
+            "gamma": 0.0174859545582588,                  # Propensity score clipping threshold (clips to [gamma, 1.0] to avoid extreme weights)
+            "G": 1,                         # Ratio of unobserved to observed samples (controls exploration in DR estimator)
             "alpha": 0.5,                   # Unused in current implementation (kept for compatibility)
             "beta": 0.1,                    # Weight for adversarial loss in propensity model training
             "theta": 1,                     # Unused in current implementation (kept for compatibility)
-            "num_bins": 10                  # Number of bins for propensity score stratification
+            "num_bins": 20                  # Number of bins for propensity score stratification
         }
         args.model_args = {
-            "embedding_k": 8,               # Embedding dimension for propensity and discriminator models
-            "embedding_k1": 8,              # Embedding dimension for prediction and imputation models
-            "pred_lr": 0.005,               # Learning rate for prediction model
-            "impu_lr": 0.005,               # Learning rate for imputation model
-            "prop_lr": 0.005,               # Learning rate for propensity model during main training
-            "dis_lr": 0.005,                # Learning rate for discriminator model
+            "embedding_k": 32,               # Embedding dimension for propensity and discriminator models
+            "embedding_k1": 64,              # Embedding dimension for prediction and imputation models
+            "pred_lr": 0.05,               # Learning rate for prediction model
+            "impu_lr": 0.01,               # Learning rate for imputation model
+            "prop_lr": 0.05,               # Learning rate for propensity model during main training
+            "dis_lr": 0.01,                # Learning rate for discriminator model
             "lamb_prop": 1e-3,              # Weight decay for propensity model during main training
             "prop_lamb": 1e-3,              # Weight decay for propensity model during pre-training (_compute_IPS)
-            "lamb_pred": 1e-4,              # Weight decay for prediction model
-            "lamb_imp": 1e-4,               # Weight decay for imputation model
-            "dis_lamb": 0.0,                # Weight decay for discriminator model
+            "lamb_pred": 0.005,              # Weight decay for prediction model
+            "lamb_imp": 0.0001,               # Weight decay for imputation model
+            "dis_lamb": 0.005,                # Weight decay for discriminator model
             "abc_model_name": "logistic_regression",  # Architecture for adversarial discriminator ("logistic_regression" or "mlp")
             "copy_model_pred": 1            # Whether to initialize imputation model with prediction model weights (1=yes, 0=no)
         }
@@ -149,25 +208,25 @@ def para(args):
         args.train_args = {
             "batch_size": 4096,             # Larger batch size for larger dataset
             "batch_size_prop": 4096,        # Batch size for propensity model
-            "gamma": 0.05,                  # Same propensity clipping as coat
+            "gamma": 0.025320297702893,                  # Same propensity clipping as coat
             "G": 4,                         # Same exploration ratio as coat
             "alpha": 0.5,                   # Unused parameter
-            "beta": 1e-5,                   # Much smaller adversarial weight (yahoo needs less regularization)
+            "beta": 1,                   # Much smaller adversarial weight (yahoo needs less regularization)
             "theta": 1,                     # Unused parameter
-            "num_bins": 10                  # Same binning strategy
+            "num_bins": 20                  # Same binning strategy
         }
         args.model_args = {
-            "embedding_k": 16,              # Larger embeddings for larger dataset
-            "embedding_k1": 16,             # Same size for prediction/imputation embeddings
-            "pred_lr": 0.01,                # Learning rate for prediction model
+            "embedding_k": 32,              # Larger embeddings for larger dataset
+            "embedding_k1": 64,             # Same size for prediction/imputation embeddings
+            "pred_lr": 0.005,                # Learning rate for prediction model
             "impu_lr": 0.01,                # Learning rate for imputation model
-            "prop_lr": 0.01,                # Learning rate for propensity model
+            "prop_lr": 0.005,                # Learning rate for propensity model
             "dis_lr": 0.01,                 # Learning rate for discriminator model
-            "lamb_prop": 1e-3,              # Weight decay for propensity model
-            "prop_lamb": 1e-3,              # Weight decay for pre-training
-            "lamb_pred": 1e-5,              # Weight decay for prediction model
-            "lamb_imp": 1e-1,               # Weight decay for imputation model (prevents overfitting)
-            "dis_lamb": 0.0,                # Weight decay for discriminator model
+            "lamb_prop": 0.00990492184668211,              # Weight decay for propensity model
+            "prop_lamb": 0.00990492184668211,              # Weight decay for pre-training
+            "lamb_pred": 0.00011624950138819,              # Weight decay for prediction model
+            "lamb_imp": 0.039023385901065,               # Weight decay for imputation model (prevents overfitting)
+            "dis_lamb": 0.0437005524910195,                # Weight decay for discriminator model
             "abc_model_name": "logistic_regression",  # Same discriminator architecture
             "copy_model_pred": 1            # Initialize imputation from prediction
         }
@@ -207,4 +266,4 @@ if __name__ == "__main__":
     train_and_eval(args.dataset, args.train_args, args.model_args)
 
 
-# python real_world/Minimax.py --dataset coat
+# python real_world/Minimax.py --dataset yahoo

@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import arguments
 from tqdm import tqdm
+import time
 
 from dataset import load_data
 from matrix_factorization_DT import generate_total_sample, MF_DRv2_BMSE_Imp, MF_DRv2_BMSE
@@ -15,6 +16,30 @@ from utils import gini_index, ndcg_func, get_user_wise_ctr, rating_mat_to_sample
 mse_func = lambda x,y: np.mean((x-y)**2)
 acc_func = lambda x,y: np.sum(x == y) / len(x)
 mae_func = lambda x,y: np.mean(np.abs(x-y))
+
+
+def count_parameters(model):
+    """Count trainable parameters in the model and its components"""
+    total_params = 0
+    param_details = {}
+    
+    # Count parameters for each component
+    if hasattr(model, 'prediction_model'):
+        pred_params = sum(p.numel() for p in model.prediction_model.parameters() if p.requires_grad)
+        param_details['Prediction Model'] = pred_params
+        total_params += pred_params
+    
+    if hasattr(model, 'imputation_model'):
+        impu_params = sum(p.numel() for p in model.imputation_model.parameters() if p.requires_grad)
+        param_details['Imputation Model'] = impu_params
+        total_params += impu_params
+    
+    if hasattr(model, 'propensity_model'):
+        prop_params = sum(p.numel() for p in model.propensity_model.parameters() if p.requires_grad)
+        param_details['Propensity Model'] = prop_params
+        total_params += prop_params
+    
+    return total_params, param_details
 
 
 def train_and_eval(dataset_name, train_args, model_args, use_imputation=True):
@@ -52,6 +77,8 @@ def train_and_eval(dataset_name, train_args, model_args, use_imputation=True):
         y_test = binarize(y_test, 3)
 
     # Create model based on imputation flag
+    init_start_time = time.time()
+    
     if use_imputation:
         print("Using MF-DRv2-BMSE with imputation model")
         mf = MF_DRv2_BMSE_Imp(
@@ -70,9 +97,16 @@ def train_and_eval(dataset_name, train_args, model_args, use_imputation=True):
             embedding_k=model_args['embedding_k'],
             embedding_k1=model_args['embedding_k1'])
     
+    init_time = time.time() - init_start_time
+    
+    # Count parameters
+    total_params, param_details = count_parameters(mf)
+    
     # No separate propensity pre-training for DRv2 models
     
     # Train the model
+    train_start_time = time.time()
+    
     if use_imputation:
         mf.fit(x_train, y_train,
                lr=model_args['pred_lr'],
@@ -96,6 +130,9 @@ def train_and_eval(dataset_name, train_args, model_args, use_imputation=True):
                beta=train_args['beta'],
                gamma=train_args['gamma'],
                num_epoch=train_args.get('num_epoch', 500))
+    
+    train_time = time.time() - train_start_time
+    total_time = init_time + train_time
 
     test_pred = mf.predict(x_test)
     mse_mf = mse_func(y_test, test_pred)
@@ -130,69 +167,99 @@ def train_and_eval(dataset_name, train_args, model_args, use_imputation=True):
     user_wise_ctr = get_user_wise_ctr(x_test,y_test,test_pred)
     gi,gu = gini_index(user_wise_ctr)
     print("***"*5 + model_name + "***"*5)
+    
+    # Print complexity analysis
+    print("\n" + "="*50)
+    print(f"{model_name} Complexity Analysis:")
+    print("="*50)
+    print(f"Total Parameters: {total_params:,}")
+    for component, params in param_details.items():
+        print(f"  - {component}: {params:,}")
+    
+    print(f"\nTraining Time:")
+    print(f"  - Model Initialization: {init_time:.2f} seconds")
+    print(f"  - Training: {train_time:.2f} seconds")
+    print(f"  - Total Time: {total_time:.2f} seconds")
+    print("="*50 + "\n")
 
 
 def para(args, use_imputation=True):
     """Set hyperparameters for different datasets"""
     if args.dataset=="coat":
         args.train_args = {
-            "batch_size": 512,              # Mini-batch size for training
-            "batch_size_prop": 512,         # Mini-batch size for propensity
+            "batch_size": 128,              # Mini-batch size for training (aligned with parameter table)
+            "batch_size_prop": 128,         # Mini-batch size for propensity
             "alpha": 1,                     # Weight for ctcvr_loss
-            "beta": 2,                      # Weight for cvr_loss_mnar  
-            "gamma": 0.1,                   # Weight for bmse_loss
+            "beta": 0.5,                    # Weight for cvr_loss_mnar (from parameter table)
+            "gamma": 0.0174859545582588,    # Weight for bmse_loss (exact value from parameter table)
             "imputation": 1e-3,             # Weight for imputation loss (if using imputation)
             "num_epoch": 500                # Number of training epochs
         }
         args.model_args = {
-            "embedding_k": 256,             # Embedding dimension for propensity model
-            "embedding_k1": 256,            # Embedding dimension for prediction/imputation models
-            "embedding_k_prop": 256,        # Propensity model embedding (if different)
-            "pred_lr": 5e-4,                # Learning rate for prediction model
-            "impu_lr": 5e-4,                # Learning rate for imputation model
-            "prop_lr": 5e-4,                # Learning rate for propensity model
-            "lamb_pred": 1e-5,              # Weight decay for prediction model
-            "lamb_imp": 1e-6,               # Weight decay for imputation model
-            "lamb_prop": 1                  # Weight decay for propensity model
+            "embedding_k": 32,              # Embedding dimension for propensity model (from parameter table)
+            "embedding_k1": 64,             # Embedding dimension for prediction/imputation models (from parameter table)
+            "embedding_k_prop": 32,         # Propensity model embedding
+            "pred_lr": 0.05,                # Learning rate for prediction model (from parameter table)
+            "impu_lr": 0.01,                # Learning rate for imputation model (from parameter table)
+            "prop_lr": 0.05,                # Learning rate for propensity model (from parameter table)
+            "lamb_pred": 0.005,             # Weight decay for prediction model (from parameter table)
+            "lamb_imp": 0.0001,             # Weight decay for imputation model (from parameter table)
+            "lamb_prop": 0.001              # Weight decay for propensity model (from parameter table)
         }
     elif args.dataset=="yahoo":
         args.train_args = {
             "batch_size": 4096,             # Larger batch size for larger dataset
             "batch_size_prop": 4096,        
-            "alpha": 1,                     
-            "beta": 1,                      # Different weight for yahoo
-            "gamma": 5e-2,                  # Smaller bmse weight
-            "imputation": 5,                # Larger imputation weight
-            "num_epoch": 500
+            "alpha": 1,                     # Weight for ctcvr_loss
+            "beta": 1,                      # Weight for cvr_loss_mnar
+            "gamma": 0.05,                  # Weight for bmse_loss (standard value)
+            "imputation": 5,                # Larger imputation weight for yahoo
+            "num_epoch": 500                # Number of training epochs
         }
         args.model_args = {
-            "embedding_k": 256,
-            "embedding_k1": 256,
-            "embedding_k_prop": 256,
-            "pred_lr": 1e-3,                # Higher learning rates for yahoo
-            "impu_lr": 1e-3,
-            "prop_lr": 1e-3,
-            "lamb_pred": 1e-6,              
-            "lamb_imp": 1e-6,
-            "lamb_prop": 1e-4               
+            "embedding_k": 32,              # Embedding dimension for propensity model
+            "embedding_k1": 64,             # Unified with Minimax
+            "embedding_k_prop": 32,         # Propensity model embedding
+            "pred_lr": 0.005,               # Unified with Minimax
+            "impu_lr": 0.01,                # Unified with Minimax
+            "prop_lr": 0.005,               # Unified with Minimax
+            "lamb_pred": 1e-3,              # Weight decay for prediction model
+            "lamb_imp": 1e-4,               # Weight decay for imputation model
+            "lamb_prop": 1e-4               # Weight decay for propensity model
         }
     elif args.dataset=="kuai":
         args.train_args = {
-            "batch_size": 4096,
-            "batch_size_prop": 4096,
-            "alpha": 1,
+            "batch_size": 4096,             # Large batch size for kuai
+            "batch_size_prop": 4096,        
+            "alpha": 1,                     # Weight for ctcvr_loss
             "beta": 5,                      # Higher beta for kuai
-            "gamma": 5e-2,
-            "num_epoch": 500                # No imputation weight for non-imputation version
+            "gamma": 0.05,                  # Weight for bmse_loss (standard value)
+            "imputation": 1e-3,             # Standard imputation weight (if using imputation)
+            "num_epoch": 500                # Number of training epochs
         }
         args.model_args = {
-            "embedding_k": 256,
-            "embedding_k1": 256,
-            "pred_lr": 5e-3,                # Learning rates between coat and yahoo
-            "prop_lr": 1e-2,                
-            "lamb_pred": 1e-6,
-            "lamb_prop": 5e-4
+            "embedding_k": 64,              # Embedding dimension for propensity model
+            "embedding_k1": 64,             # Embedding dimension for prediction/imputation models
+            "embedding_k_prop": 64,         # Propensity model embedding
+            "pred_lr": 0.01,                # Learning rate for prediction model
+            "impu_lr": 0.01,                # Learning rate for imputation model (if using imputation)
+            "prop_lr": 0.01,                # Learning rate for propensity model
+            "lamb_pred": 1e-3,              # Weight decay for prediction model
+            "lamb_imp": 1e-4,               # Weight decay for imputation model (if using imputation)
+            "lamb_prop": 5e-4               # Weight decay for propensity model
         }
+    
+    # Remove imputation-related parameters if not using imputation
+    if not use_imputation:
+        # Remove imputation weight from train_args
+        if 'imputation' in args.train_args:
+            del args.train_args['imputation']
+        # Remove imputation learning rate and weight decay from model_args
+        if 'impu_lr' in args.model_args:
+            del args.model_args['impu_lr']
+        if 'lamb_imp' in args.model_args:
+            del args.model_args['lamb_imp']
+    
     return args
 
 
