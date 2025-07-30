@@ -23,7 +23,6 @@ def count_parameters(model):
     total_params = 0
     param_details = {}
     
-    # Count parameters for each component
     if hasattr(model, 'prediction_model'):
         pred_params = sum(p.numel() for p in model.prediction_model.parameters() if p.requires_grad)
         param_details['Prediction Model'] = pred_params
@@ -76,10 +75,9 @@ def train_and_eval(dataset_name, train_args, model_args, use_imputation=True):
         y_train = binarize(y_train, 3)
         y_test = binarize(y_test, 3)
 
-    # Create model based on imputation flag
     init_start_time = time.time()
     
-    if use_imputation:
+    if use_imputation: # 两种
         print("Using MF-DRv2-BMSE with imputation model")
         mf = MF_DRv2_BMSE_Imp(
             num_user, num_item, 
@@ -99,12 +97,9 @@ def train_and_eval(dataset_name, train_args, model_args, use_imputation=True):
     
     init_time = time.time() - init_start_time
     
-    # Count parameters
     total_params, param_details = count_parameters(mf)
     
-    # No separate propensity pre-training for DRv2 models
-    
-    # Train the model
+    # Train the model, v2 不需要 ips pretrain
     train_start_time = time.time()
     
     if use_imputation:
@@ -168,7 +163,6 @@ def train_and_eval(dataset_name, train_args, model_args, use_imputation=True):
     gi,gu = gini_index(user_wise_ctr)
     print("***"*5 + model_name + "***"*5)
     
-    # Print complexity analysis
     print("\n" + "="*50)
     print(f"{model_name} Complexity Analysis:")
     print("="*50)
@@ -187,74 +181,72 @@ def para(args, use_imputation=True):
     """Set hyperparameters for different datasets"""
     if args.dataset=="coat":
         args.train_args = {
-            "batch_size": 128,              # Mini-batch size for training (aligned with parameter table)
-            "batch_size_prop": 128,         # Mini-batch size for propensity
+            "batch_size": 512,              # Mini-batch size for training (from original repo)
+            "batch_size_prop": 512,         # Mini-batch size for propensity
             "alpha": 1,                     # Weight for ctcvr_loss
-            "beta": 0.5,                    # Weight for cvr_loss_mnar (from parameter table)
-            "gamma": 0.0174859545582588,    # Weight for bmse_loss (exact value from parameter table)
+            "beta": 2,                      # Weight for cvr_loss_mnar (from original repo)
+            "gamma": 0.1,                   # Weight for bmse_loss (from original repo)
             "imputation": 1e-3,             # Weight for imputation loss (if using imputation)
             "num_epoch": 500                # Number of training epochs
         }
         args.model_args = {
-            "embedding_k": 32,              # Embedding dimension for propensity model (from parameter table)
-            "embedding_k1": 64,             # Embedding dimension for prediction/imputation models (from parameter table)
-            "embedding_k_prop": 32,         # Propensity model embedding
-            "pred_lr": 0.05,                # Learning rate for prediction model (from parameter table)
-            "impu_lr": 0.01,                # Learning rate for imputation model (from parameter table)
-            "prop_lr": 0.05,                # Learning rate for propensity model (from parameter table)
-            "lamb_pred": 0.005,             # Weight decay for prediction model (from parameter table)
-            "lamb_imp": 0.0001,             # Weight decay for imputation model (from parameter table)
-            "lamb_prop": 0.001              # Weight decay for propensity model (from parameter table)
+            "embedding_k": 256,             # Embedding dimension for propensity model (from original repo)
+            "embedding_k1": 256,            # Embedding dimension for prediction/imputation models (from original repo)
+            "embedding_k_prop": 256,        # Propensity model embedding
+            "pred_lr": 5e-4,                # Learning rate for prediction model (from original repo)
+            "impu_lr": 5e-4,                # Learning rate for imputation model (from original repo)
+            "prop_lr": 5e-4,                # Learning rate for propensity model (from original repo)
+            "lamb_pred": 1e-5,              # Weight decay for prediction model (from original repo)
+            "lamb_imp": 1e-6,               # Weight decay for imputation model (from original repo)
+            "lamb_prop": 1                  # Weight decay for propensity model (from original repo)
         }
     elif args.dataset=="yahoo":
         args.train_args = {
-            "batch_size": 4096,             # Larger batch size for larger dataset
+            "batch_size": 4096,             # Batch size from original repo
             "batch_size_prop": 4096,        
             "alpha": 1,                     # Weight for ctcvr_loss
-            "beta": 1,                      # Weight for cvr_loss_mnar
-            "gamma": 0.05,                  # Weight for bmse_loss (standard value)
-            "imputation": 5,                # Larger imputation weight for yahoo
+            "beta": 5,                      # Weight for cvr_loss_mnar
+            "gamma": 0.027273584201690376,                  # Weight for bmse_loss (5e-2 from original)
+            "imputation": 5,                # Imputation weight from original
             "num_epoch": 500                # Number of training epochs
         }
         args.model_args = {
-            "embedding_k": 32,              # Embedding dimension for propensity model
-            "embedding_k1": 64,             # Unified with Minimax
-            "embedding_k_prop": 32,         # Propensity model embedding
-            "pred_lr": 0.005,               # Unified with Minimax
-            "impu_lr": 0.01,                # Unified with Minimax
-            "prop_lr": 0.005,               # Unified with Minimax
-            "lamb_pred": 1e-3,              # Weight decay for prediction model
-            "lamb_imp": 1e-4,               # Weight decay for imputation model
-            "lamb_prop": 1e-4               # Weight decay for propensity model
+            "embedding_k": 128,             # Embedding dimension for propensity model
+            "embedding_k1": 128,            # Embedding dimension for prediction/imputation models
+            "embedding_k_prop": 32,        # Propensity model embedding (same as others)
+            "pred_lr": 0.001,                # Learning rate from original repo
+            "impu_lr": 1e-3,                # Learning rate from original repo
+            "prop_lr": 0.005,                # Learning rate from original repo
+            "lamb_pred": 1e-06,              # Weight decay for prediction model
+            "lamb_imp": 1e-6,               # Weight decay for imputation model
+            "lamb_prop": 1e-05              # Weight decay for propensity model
         }
     elif args.dataset=="kuai":
         args.train_args = {
-            "batch_size": 4096,             # Large batch size for kuai
+            "batch_size": 4096,             # Batch size from original repo (product dataset)
             "batch_size_prop": 4096,        
             "alpha": 1,                     # Weight for ctcvr_loss
-            "beta": 5,                      # Higher beta for kuai
-            "gamma": 0.05,                  # Weight for bmse_loss (standard value)
-            "imputation": 1e-3,             # Standard imputation weight (if using imputation)
+            "beta": 10,                     # Weight for cvr_loss_mnar from original repo
+            "gamma": 1,                     # Weight for bmse_loss from original repo
+            "imputation": 5,                # Imputation weight from original repo
             "num_epoch": 500                # Number of training epochs
         }
         args.model_args = {
-            "embedding_k": 64,              # Embedding dimension for propensity model
-            "embedding_k1": 64,             # Embedding dimension for prediction/imputation models
-            "embedding_k_prop": 64,         # Propensity model embedding
-            "pred_lr": 0.01,                # Learning rate for prediction model
-            "impu_lr": 0.01,                # Learning rate for imputation model (if using imputation)
-            "prop_lr": 0.01,                # Learning rate for propensity model
-            "lamb_pred": 1e-3,              # Weight decay for prediction model
-            "lamb_imp": 1e-4,               # Weight decay for imputation model (if using imputation)
-            "lamb_prop": 5e-4               # Weight decay for propensity model
+            "embedding_k": 256,             # Embedding dimension for propensity model from original
+            "embedding_k1": 256,            # Embedding dimension for prediction/imputation models
+            "embedding_k_prop": 256,        # Propensity model embedding
+            "pred_lr": 5e-4,                # Learning rate from original repo
+            "impu_lr": 5e-4,                # Learning rate from original repo
+            "prop_lr": 1e-3,                # Propensity learning rate from original repo
+            "lamb_pred": 0,                 # Weight decay for prediction model (0 in original)
+            "lamb_imp": 0,                  # Weight decay for imputation model (0 in original)
+            "lamb_prop": 5                  # Weight decay for propensity model from original
         }
     
-    # Remove imputation-related parameters if not using imputation
+    # remove imputation-related parameters if not using imputation
     if not use_imputation:
-        # Remove imputation weight from train_args
         if 'imputation' in args.train_args:
             del args.train_args['imputation']
-        # Remove imputation learning rate and weight decay from model_args
         if 'impu_lr' in args.model_args:
             del args.model_args['impu_lr']
         if 'lamb_imp' in args.model_args:
@@ -266,9 +258,7 @@ def para(args, use_imputation=True):
 if __name__ == "__main__":
     args = arguments.parse_args()
     
-    # Check if we should use imputation model based on command line argument
-    # You can add a command line argument for this, or just set it here
-    use_imputation = True  # Set to False to use the version without imputation
+    use_imputation = True # set to False to use the version without imputation
     
     para(args=args, use_imputation=use_imputation)
     

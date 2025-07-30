@@ -77,11 +77,11 @@ def train_and_eval(dataset_name, train_args, model_args):
     print("# user: {}, # item: {}".format(num_user, num_item))
     # binarize
     if dataset_name == "kuai":
-        y_train = binarize(y_train, 1)
-        y_test = binarize(y_test, 1)
+        y_train = binarize(y_train, 2)
+        y_test = binarize(y_test, 2)
     else:
-        y_train = binarize(y_train)
-        y_test = binarize(y_test)
+        y_train = binarize(y_train, 3)
+        y_test = binarize(y_test, 3)
 
     "Minimax"
     # Start timing for model initialization
@@ -187,7 +187,7 @@ def para(args):
             "alpha": 0.5,                   # Unused in current implementation (kept for compatibility)
             "beta": 0.1,                    # Weight for adversarial loss in propensity model training
             "theta": 1,                     # Unused in current implementation (kept for compatibility)
-            "num_bins": 20                  # Number of bins for propensity score stratification
+            "num_bins": 20                 # Number of bins for propensity score stratification
         }
         args.model_args = {
             "embedding_k": 32,               # Embedding dimension for propensity and discriminator models
@@ -213,7 +213,7 @@ def para(args):
             "alpha": 0.5,                   # Unused parameter
             "beta": 1,                   # Much smaller adversarial weight (yahoo needs less regularization)
             "theta": 1,                     # Unused parameter
-            "num_bins": 20                  # Same binning strategy
+            "num_bins": 3                  # Same binning strategy
         }
         args.model_args = {
             "embedding_k": 32,              # Larger embeddings for larger dataset

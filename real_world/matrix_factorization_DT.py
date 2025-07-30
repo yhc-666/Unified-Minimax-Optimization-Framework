@@ -1642,7 +1642,7 @@ class MF_Minimax(nn.Module):
         early_stop = 0
         stop = 5  # Default stop value
         
-        bin_edges = torch.linspace(0, 1, steps=num_bins + 1, device=self.device)[1:-1]
+        bin_edges = torch.linspace(0, 1, steps=int(num_bins) + 1, device=self.device)[1:-1]
         print('bin_edges', bin_edges)
         
         for epoch in tqdm(range(num_epoch), desc="Training Minimax", disable=not verbose):
@@ -1685,7 +1685,7 @@ class MF_Minimax(nn.Module):
                 bin_indices, full_boundaries = equal_frequency_binning(prop_sampled.detach(), bin_edges, n_bins=num_bins)
                 bin_indices = torch.clamp(bin_indices, 0, num_bins - 1)  
 
-                bin_sum_index = torch.nn.functional.one_hot(bin_indices, num_classes=bin_indices.max() + 1).float()
+                bin_sum_index = torch.nn.functional.one_hot(bin_indices.long(), num_classes=int(num_bins)).float()
                 
                 # Pass embeddings to ABC model, not indices
                 prop_error_dis = self.model_abc(prop_user_emb.detach(), prop_item_emb.detach()) * (obs_sampled - prop_sampled.detach())

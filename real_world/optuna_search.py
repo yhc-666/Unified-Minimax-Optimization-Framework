@@ -12,7 +12,7 @@ import argparse
 import numpy as np
 import torch
 from sklearn.metrics import roc_auc_score
-from matrix_factorization_DT import MF_Minimax
+from matrix_factorization_DT import MF_Minimax, MF_DRv2_BMSE_Imp, MF_DRv2_BMSE
 from dataset import load_data
 from utils import ndcg_func, recall_func, precision_func, rating_mat_to_sample, binarize, shuffle
 from matrix_factorization_DT import generate_total_sample
@@ -80,6 +80,61 @@ HYPERPARAM_RANGES = {
         'num_bins': [5, 10, 15, 20],
         'batch_size': [4096],
         'abc_model_name': ['logistic_regression', 'mlp']
+    }
+}
+
+# DR-V2 specific hyperparameter ranges
+DRV2_HYPERPARAM_RANGES = {
+    'coat': {
+        'embedding_k': [16, 32, 64],  # For propensity model
+        'embedding_k1': [16, 32, 64], # For prediction/imputation models
+        'embedding_k_prop': [16, 32, 64], # For DRv2_Imp propensity model
+        'pred_lr': [0.01, 0.05],
+        'impu_lr': [0.005, 0.01],  # Only for DRv2_Imp
+        'prop_lr': [0.01, 0.05],
+        'lamb_pred': [0.001, 0.005, 0.01],
+        'lamb_imp': [5e-5, 1e-4, 5e-4],  # Only for DRv2_Imp
+        'lamb_prop': [5e-4, 0.001, 0.005],
+        'alpha': [1],  # Fixed as it's unused
+        'beta': [0.1, 0.5, 1, 2],
+        'gamma': (0.01, 0.05),
+        'imputation': [1e-4, 1e-3, 1e-2],  # Only for DRv2_Imp
+        'batch_size': [128],
+        'num_epoch': [500]
+    },
+    'yahoo': {
+        'embedding_k': [64, 128, 256],
+        'embedding_k1': [64, 128, 256],
+        'embedding_k_prop': [32, 64, 128],
+        'pred_lr': [0.001, 0.005],
+        'impu_lr': [0.001, 0.005],  # Only for DRv2_Imp
+        'prop_lr': [0.001, 0.005],
+        'lamb_pred': [1e-6, 1e-5, 1e-4],
+        'lamb_imp': [1e-6, 1e-5, 1e-4],  # Only for DRv2_Imp
+        'lamb_prop': [1e-5, 1e-4, 1e-3],
+        'alpha': [1],  # Fixed as it's unused
+        'beta': [0.5, 1, 2, 5],
+        'gamma': (0.01, 0.1),
+        'imputation': [0.5, 1, 5],  # Only for DRv2_Imp
+        'batch_size': [4096],
+        'num_epoch': [500]
+    },
+    'kuai': {
+        'embedding_k': [32, 64, 128],
+        'embedding_k1': [32, 64, 128],
+        'embedding_k_prop': [32, 64, 128],
+        'pred_lr': [0.005, 0.01],
+        'impu_lr': [0.005, 0.01],  # Only for DRv2_Imp
+        'prop_lr': [0.005, 0.01],
+        'lamb_pred': [5e-4, 1e-3, 5e-3],
+        'lamb_imp': [5e-5, 1e-4, 5e-4],  # Only for DRv2_Imp
+        'lamb_prop': [1e-4, 5e-4, 1e-3],
+        'alpha': [1],  # Fixed as it's unused
+        'beta': [1, 3, 5, 10],
+        'gamma': (0.01, 0.1),
+        'imputation': [1e-4, 1e-3, 1e-2],  # Only for DRv2_Imp
+        'batch_size': [4096],
+        'num_epoch': [500]
     }
 }
 
@@ -189,51 +244,206 @@ def train_and_eval_with_params(dataset_name, train_args, model_args):
     return results
 
 
+def train_and_eval_drv2(dataset_name, train_args, model_args, use_imputation=True):
+    """Train and evaluate DR-V2 model with given hyperparameters"""
+    
+    # Set up data based on dataset
+    top_k_list = [5]
+    
+    if dataset_name == "coat":
+        train_mat, test_mat = load_data("coat")        
+        x_train, y_train = rating_mat_to_sample(train_mat)
+        x_test, y_test = rating_mat_to_sample(test_mat)
+        num_user = train_mat.shape[0]
+        num_item = train_mat.shape[1]
+
+    elif dataset_name == "yahoo":
+        x_train, y_train, x_test, y_test = load_data("yahoo")
+        x_train, y_train = shuffle(x_train, y_train)
+        num_user = x_train[:,0].max() + 1
+        num_item = x_train[:,1].max() + 1
+
+    elif dataset_name == "kuai":
+        x_train, y_train, x_test, y_test = load_data("kuai")
+        num_user = x_train[:,0].max() + 1
+        num_item = x_train[:,1].max() + 1
+        top_k_list = [20]
+
+    # Binarize ratings
+    if dataset_name == "kuai":
+        y_train = binarize(y_train, 2)
+        y_test = binarize(y_test, 2)
+    else:
+        y_train = binarize(y_train, 3)
+        y_test = binarize(y_test, 3)
+
+    # Create model based on imputation flag
+    if use_imputation:
+        mf = MF_DRv2_BMSE_Imp(
+            num_user, num_item, 
+            batch_size=train_args['batch_size'], 
+            batch_size_prop=train_args['batch_size_prop'],
+            embedding_k=model_args.get('embedding_k', model_args['embedding_k1']), 
+            embedding_k1=model_args['embedding_k1'],
+            embedding_k_prop=model_args.get('embedding_k_prop', model_args.get('embedding_k', model_args['embedding_k1']))
+        )
+        
+        # Train with imputation parameters
+        mf.fit(x_train, y_train,
+               lr=model_args['pred_lr'],
+               impu_lr=model_args['impu_lr'],
+               prop_lr=model_args['prop_lr'],
+               lamb=model_args['lamb_pred'],
+               lamb_imp=model_args['lamb_imp'],
+               lamb_prop=model_args['lamb_prop'],
+               alpha=train_args.get('alpha', 1),
+               beta=train_args['beta'],
+               gamma=train_args['gamma'],
+               imputation=train_args['imputation'],
+               num_epoch=train_args.get('num_epoch', 500),
+               verbose=False)
+    else:
+        mf = MF_DRv2_BMSE(
+            num_user, num_item,
+            batch_size=train_args['batch_size'],
+            batch_size_prop=train_args['batch_size_prop'],
+            embedding_k=model_args.get('embedding_k', model_args['embedding_k1']),
+            embedding_k1=model_args['embedding_k1']
+        )
+        
+        # Train without imputation parameters
+        mf.fit(x_train, y_train,
+               lr=model_args['pred_lr'],
+               prop_lr=model_args['prop_lr'],
+               lamb=model_args['lamb_pred'],
+               lamb_prop=model_args['lamb_prop'],
+               alpha=train_args.get('alpha', 1),
+               beta=train_args['beta'],
+               gamma=train_args['gamma'],
+               num_epoch=train_args.get('num_epoch', 500),
+               verbose=False)
+
+    # Evaluate
+    test_pred = mf.predict(x_test)
+    mse = mse_func(y_test, test_pred)
+    mae = mae_func(y_test, test_pred)
+    auc = roc_auc_score(y_test, test_pred)
+    ndcgs = ndcg_func(mf, x_test, y_test, top_k_list)
+    precisions = precision_func(mf, x_test, y_test, top_k_list)
+    recalls = recall_func(mf, x_test, y_test, top_k_list)
+    
+    # Build results dictionary with all metrics
+    results = {
+        'mse': mse,
+        'mae': mae,
+        'auc': auc,
+    }
+    
+    # Add metrics for each k value
+    for k in top_k_list:
+        precision_key = f"precision_{k}"
+        recall_key = f"recall_{k}"
+        ndcg_key = f"ndcg_{k}"
+        
+        # Calculate F1 for this k
+        f1_k = 2 / (1 / np.mean(precisions[precision_key]) + 1 / np.mean(recalls[recall_key]))
+        
+        results[f'ndcg_{k}'] = np.mean(ndcgs[ndcg_key])
+        results[f'precision_{k}'] = np.mean(precisions[precision_key])
+        results[f'recall_{k}'] = np.mean(recalls[recall_key])
+        results[f'f1_{k}'] = f1_k
+    
+    # For backward compatibility, also include the first k value without suffix
+    results['ndcg'] = results[f'ndcg_{top_k_list[0]}']
+    results['precision'] = results[f'precision_{top_k_list[0]}']
+    results['recall'] = results[f'recall_{top_k_list[0]}']
+    results['f1'] = results[f'f1_{top_k_list[0]}']
+    
+    return results
+
+
 def objective(trial, args):
     """Optuna objective function for multi-objective optimization"""
     
-    # Get hyperparameter ranges for the dataset
-    ranges = HYPERPARAM_RANGES[args.dataset]
+    # 目前支持DRV2与minimax
+    if args.model_type == 'minimax':
+        ranges = HYPERPARAM_RANGES[args.dataset]
+    else:
+        ranges = DRV2_HYPERPARAM_RANGES[args.dataset]
     
-    # Suggest hyperparameters
-    train_args = {
-        'batch_size': trial.suggest_categorical('batch_size', ranges['batch_size']),
-        'batch_size_prop': trial.suggest_categorical('batch_size', ranges['batch_size']),  # Same as batch_size
-        'gamma': trial.suggest_float('gamma', *ranges['gamma']),
-        'G': trial.suggest_categorical('G', ranges['G']),
-        'beta': trial.suggest_categorical('beta', ranges['beta']),
-        'num_bins': trial.suggest_categorical('num_bins', ranges['num_bins']),
-        'alpha': 0.5,  # Unused parameter
-        'theta': 1     # Unused parameter
-    }
-    
-    model_args = {
-        'embedding_k': trial.suggest_categorical('embedding_k', ranges['embedding_k']),
-        'embedding_k1': trial.suggest_categorical('embedding_k1', ranges['embedding_k1']),
-        'pred_lr': trial.suggest_categorical('pred_lr', ranges['pred_lr']),
-        'impu_lr': trial.suggest_categorical('impu_lr', ranges['impu_lr']),
-        'prop_lr': trial.suggest_categorical('prop_lr', ranges['prop_lr']),
-        'dis_lr': trial.suggest_categorical('dis_lr', ranges['dis_lr']),
-        'lamb_pred': trial.suggest_categorical('lamb_pred', ranges['lamb_pred']),
-        'lamb_imp': trial.suggest_categorical('lamb_imp', ranges['lamb_imp']),
-        'lamb_prop': trial.suggest_categorical('lamb_prop', ranges['lamb_prop']),
-        'dis_lamb': trial.suggest_categorical('dis_lamb', ranges['dis_lamb']),
-        'abc_model_name': trial.suggest_categorical('abc_model_name', ranges['abc_model_name']),
-        'copy_model_pred': 1
-    }
+    # Suggest hyperparameters based on model type
+    if args.model_type == 'minimax':
+        train_args = {
+            'batch_size': trial.suggest_categorical('batch_size', ranges['batch_size']),
+            'batch_size_prop': trial.suggest_categorical('batch_size', ranges['batch_size']),  # Same as batch_size
+            'gamma': trial.suggest_float('gamma', *ranges['gamma']),
+            'G': trial.suggest_categorical('G', ranges['G']),
+            'beta': trial.suggest_categorical('beta', ranges['beta']),
+            'num_bins': trial.suggest_categorical('num_bins', ranges['num_bins']),
+            'alpha': 0.5,  # Unused parameter
+            'theta': 1     # Unused parameter
+        }
+        
+        model_args = {
+            'embedding_k': trial.suggest_categorical('embedding_k', ranges['embedding_k']),
+            'embedding_k1': trial.suggest_categorical('embedding_k1', ranges['embedding_k1']),
+            'pred_lr': trial.suggest_categorical('pred_lr', ranges['pred_lr']),
+            'impu_lr': trial.suggest_categorical('impu_lr', ranges['impu_lr']),
+            'prop_lr': trial.suggest_categorical('prop_lr', ranges['prop_lr']),
+            'dis_lr': trial.suggest_categorical('dis_lr', ranges['dis_lr']),
+            'lamb_pred': trial.suggest_categorical('lamb_pred', ranges['lamb_pred']),
+            'lamb_imp': trial.suggest_categorical('lamb_imp', ranges['lamb_imp']),
+            'lamb_prop': trial.suggest_categorical('lamb_prop', ranges['lamb_prop']),
+            'dis_lamb': trial.suggest_categorical('dis_lamb', ranges['dis_lamb']),
+            'abc_model_name': trial.suggest_categorical('abc_model_name', ranges['abc_model_name']),
+            'copy_model_pred': 1
+        }
+    else:
+        # DR-V2 parameters
+        train_args = {
+            'batch_size': trial.suggest_categorical('batch_size', ranges['batch_size']),
+            'batch_size_prop': trial.suggest_categorical('batch_size', ranges['batch_size']),  # Same as batch_size
+            'gamma': trial.suggest_float('gamma', *ranges['gamma']),
+            'beta': trial.suggest_categorical('beta', ranges['beta']),
+            'alpha': trial.suggest_categorical('alpha', ranges['alpha']),
+            'num_epoch': trial.suggest_categorical('num_epoch', ranges['num_epoch'])
+        }
+        
+        # Add imputation parameter only for drv2_imp
+        if args.model_type == 'drv2_imp':
+            train_args['imputation'] = trial.suggest_categorical('imputation', ranges['imputation'])
+        
+        model_args = {
+            'embedding_k': trial.suggest_categorical('embedding_k', ranges['embedding_k']),
+            'embedding_k1': trial.suggest_categorical('embedding_k1', ranges['embedding_k1']),
+            'pred_lr': trial.suggest_categorical('pred_lr', ranges['pred_lr']),
+            'prop_lr': trial.suggest_categorical('prop_lr', ranges['prop_lr']),
+            'lamb_pred': trial.suggest_categorical('lamb_pred', ranges['lamb_pred']),
+            'lamb_prop': trial.suggest_categorical('lamb_prop', ranges['lamb_prop'])
+        }
+        
+        # Add embedding_k_prop if specified in ranges
+        if 'embedding_k_prop' in ranges:
+            model_args['embedding_k_prop'] = trial.suggest_categorical('embedding_k_prop', ranges['embedding_k_prop'])
+        
+        # Add imputation-specific parameters only for drv2_imp
+        if args.model_type == 'drv2_imp':
+            model_args['impu_lr'] = trial.suggest_categorical('impu_lr', ranges['impu_lr'])
+            model_args['lamb_imp'] = trial.suggest_categorical('lamb_imp', ranges['lamb_imp'])
     
     try:
-        # Train and evaluate
         start_time = time.time()
-        results = train_and_eval_with_params(args.dataset, train_args, model_args)
+        if args.model_type == 'minimax':
+            results = train_and_eval_with_params(args.dataset, train_args, model_args)
+        else:
+            use_imputation = (args.model_type == 'drv2_imp')
+            results = train_and_eval_drv2(args.dataset, train_args, model_args, use_imputation)
         training_time = time.time() - start_time
         
-        # Log all metrics
         for metric_name, value in results.items():
             trial.set_user_attr(metric_name, value)
         trial.set_user_attr('training_time', training_time)
         
-        # Save to CSV
         if args.save_all_trials:
             save_trial_to_csv(trial, results, args)
         
@@ -257,9 +467,8 @@ def save_trial_to_csv(trial, results, args):
     """Save trial results to CSV file"""
     dataset_output_dir = os.path.join(args.output_dir, args.dataset)
     os.makedirs(dataset_output_dir, exist_ok=True)
-    csv_path = os.path.join(dataset_output_dir, f'{args.dataset}_all_trials.csv')
+    csv_path = os.path.join(dataset_output_dir, f'{args.dataset}_{args.model_type}_all_trials.csv')
     
-    # Prepare row data
     row_data = {
         'trial_number': trial.number,
         'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
@@ -268,12 +477,10 @@ def save_trial_to_csv(trial, results, args):
         'training_time': trial.user_attrs.get('training_time', -1)
     }
     
-    # Add objective values for multi-objective optimization
     if hasattr(trial, 'values') and trial.values is not None:
         for i, (metric, value) in enumerate(zip(args.metrics, trial.values)):
             row_data[f'objective_{metric}'] = value
     
-    # Write header if file doesn't exist
     file_exists = os.path.exists(csv_path)
     
     with open(csv_path, 'a', newline='') as f:
@@ -284,10 +491,13 @@ def save_trial_to_csv(trial, results, args):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Optuna hyperparameter search for MF_Minimax')
+    parser = argparse.ArgumentParser(description='Optuna hyperparameter search for MF models')
     parser.add_argument('--dataset', type=str, default='coat', 
                         choices=['coat', 'yahoo', 'kuai'],
                         help='Dataset to use')
+    parser.add_argument('--model_type', type=str, default='minimax',
+                        choices=['minimax', 'drv2', 'drv2_imp'],
+                        help='Model type to use: minimax (MF_Minimax), drv2 (MF_DRv2_BMSE), drv2_imp (MF_DRv2_BMSE_Imp)')
     parser.add_argument('--n_trials', type=int, default=100,
                         help='Number of optuna trials')
     parser.add_argument('--metrics', type=str, nargs='+', default=['auc'],
@@ -313,7 +523,7 @@ def parse_args():
     
     args = parser.parse_args()
     
-    # Validate that metrics and directions have the same length
+    # check that metrics and directions have the same length
     if len(args.metrics) != len(args.directions):
         parser.error(f"Number of metrics ({len(args.metrics)}) must match number of directions ({len(args.directions)})")
     
@@ -323,25 +533,19 @@ def parse_args():
 def main():
     args = parse_args()
     
-    # Set random seeds
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     
-    # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
     
-    # Create subdirectory for this dataset
     dataset_output_dir = os.path.join(args.output_dir, args.dataset)
     os.makedirs(dataset_output_dir, exist_ok=True)
     
-    # Create study name
     if args.study_name is None:
         metrics_str = '_'.join(args.metrics)
-        args.study_name = f'{args.dataset}_{metrics_str}_{time.strftime("%Y%m%d_%H%M%S")}'
+        args.study_name = f'{args.dataset}_{args.model_type}_{metrics_str}_{time.strftime("%Y%m%d_%H%M%S")}'
     
-    # Create optuna study for multi-objective optimization
     if args.storage:
-        # For distributed optimization
         study = create_study(
             study_name=args.study_name,
             directions=args.directions,
@@ -350,32 +554,26 @@ def main():
             sampler=TPESampler(seed=args.seed)
         )
     else:
-        # Local optimization
         study = create_study(
             study_name=args.study_name,
             directions=args.directions,
             sampler=TPESampler(seed=args.seed)
         )
     
-    # Run optimization
-    print(f"Starting multi-objective hyperparameter search for {args.dataset} dataset")
+    print(f"Starting multi-objective hyperparameter search for {args.dataset} dataset using {args.model_type} model")
     print(f"Optimizing metrics: {', '.join([f'{m} ({d})' for m, d in zip(args.metrics, args.directions)])}")
     print(f"Running {args.n_trials} trials...")
     
     study.optimize(lambda trial: objective(trial, args), n_trials=args.n_trials)
     
-    # Get Pareto optimal trials
     pareto_trials = study.best_trials
     
-    # Print results
     print("\n" + "="*50)
     print(f"Found {len(pareto_trials)} Pareto optimal solutions")
     
-    # Save Pareto optimal parameters
-    pareto_params_path = os.path.join(dataset_output_dir, f'{args.dataset}_pareto_optimal_params.csv')
+    pareto_params_path = os.path.join(dataset_output_dir, f'{args.dataset}_{args.model_type}_pareto_optimal_params.csv')
     with open(pareto_params_path, 'w', newline='') as f:
         if pareto_trials:
-            # Prepare fieldnames
             fieldnames = ['trial_number', 'pareto_rank']
             fieldnames.extend(args.metrics)
             fieldnames.extend(sorted(pareto_trials[0].params.keys()))
@@ -388,17 +586,15 @@ def main():
                     'trial_number': trial.number,
                     'pareto_rank': idx + 1
                 }
-                # Add metric values
                 for i, metric in enumerate(args.metrics):
                     row[metric] = trial.values[i]
-                # Add parameters
                 row.update(trial.params)
                 writer.writerow(row)
     
-    # Save study summary
-    summary_path = os.path.join(dataset_output_dir, f'{args.dataset}_summary.txt')
+    summary_path = os.path.join(dataset_output_dir, f'{args.dataset}_{args.model_type}_summary.txt')
     with open(summary_path, 'w') as f:
         f.write(f"Dataset: {args.dataset}\n")
+        f.write(f"Model Type: {args.model_type}\n")
         f.write(f"Metrics: {', '.join([f'{m} ({d})' for m, d in zip(args.metrics, args.directions)])}\n")
         f.write(f"Number of trials: {args.n_trials}\n")
         f.write(f"Number of Pareto optimal solutions: {len(pareto_trials)}\n\n")
@@ -412,12 +608,10 @@ def main():
                 f.write(f"Pareto Solution #{idx+1} (Trial {trial.number}):\n")
                 f.write("-"*40 + "\n")
                 
-                # Write objective values
                 f.write("Objective values:\n")
                 for i, (metric, value) in enumerate(zip(args.metrics, trial.values)):
                     f.write(f"  {metric}: {value:.6f}\n")
                 
-                # Write all metrics
                 f.write("\nAll metrics:\n")
                 for key, value in trial.user_attrs.items():
                     if isinstance(value, float):
@@ -425,7 +619,6 @@ def main():
                     else:
                         f.write(f"  {key}: {value}\n")
                 
-                # Write parameters
                 f.write("\nParameters:\n")
                 for key, value in trial.params.items():
                     f.write(f"  {key}: {value}\n")
@@ -441,3 +634,14 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+
+  # For DR-V2 with imputation
+  # python real_world/optuna_search.py --dataset coat --model_type drv2_imp --n_trials 100 --metrics auc ndcg
+
+  # For DR-V2 without imputation
+  # python real_world/optuna_search.py --dataset yahoo --model_type drv2 --n_trials 100 --metrics auc
+
+  # Original Minimax model (default)
+  # python real_world/optuna_search.py --dataset kuai --model_type minimax --n_trials 100
