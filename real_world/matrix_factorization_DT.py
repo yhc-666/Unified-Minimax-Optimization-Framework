@@ -87,6 +87,27 @@ class MF_BaseModel(nn.Module):
         else:
             return out
 
+    def forward_logit(self, x, is_training=False):
+        user_idx = torch.LongTensor(x[:, 0]).to(self.device)
+        item_idx = torch.LongTensor(x[:, 1]).to(self.device)
+        U_emb = self.W(user_idx)
+        V_emb = self.H(item_idx)
+
+        out = torch.sum(U_emb.mul(V_emb), 1)
+
+        if is_training:
+            return out, U_emb, V_emb
+        else:
+            return out
+    
+    def get_emb(self, x):
+        user_idx = torch.LongTensor(x[:, 0]).to(self.device)
+        item_idx = torch.LongTensor(x[:, 1]).to(self.device)
+        U_emb = self.W(user_idx)
+        V_emb = self.H(item_idx)
+        
+        return U_emb, V_emb
+
     def predict(self, x):
         pred = self.forward(x)
         return pred.detach().cpu()
@@ -126,6 +147,30 @@ class NCF_BaseModel(nn.Module):
             return torch.squeeze(out), U_emb, V_emb
         else:
             return torch.squeeze(out)        
+    
+    def forward_logit(self, x, is_training=False):
+        user_idx = torch.LongTensor(x[:, 0]).to(self.device)
+        item_idx = torch.LongTensor(x[:, 1]).to(self.device)
+        U_emb = self.W(user_idx)
+        V_emb = self.H(item_idx)
+
+        # concat
+        z_emb = torch.cat([U_emb, V_emb], axis=1)
+
+        out = self.linear_1(z_emb)
+
+        if is_training:
+            return torch.squeeze(out), U_emb, V_emb
+        else:
+            return torch.squeeze(out)
+    
+    def get_emb(self, x):
+        user_idx = torch.LongTensor(x[:, 0]).to(self.device)
+        item_idx = torch.LongTensor(x[:, 1]).to(self.device)
+        U_emb = self.W(user_idx)
+        V_emb = self.H(item_idx)
+        
+        return U_emb, V_emb
         
     def predict(self, x):
         pred = self.forward(x)
@@ -338,7 +383,7 @@ class MF_DR(nn.Module):
         return pred.detach().cpu().numpy()
 
 
-
+# timing expriment
 class MF_DR_JL(nn.Module):
     def __init__(self, num_users, num_items, batch_size, batch_size_prop, embedding_k=4, *args, **kwargs):
         super().__init__()
@@ -894,6 +939,10 @@ class MF_DR_BMSE(MF_DR_JL):
     
     # predict() method is inherited from parent class
 
+
+
+
+# timing expriment
 class MF_MRDR_JL(nn.Module):
     def __init__(self, num_users, num_items, batch_size, batch_size_prop, embedding_k=4, *args, **kwargs):
         super().__init__()
@@ -1014,13 +1063,13 @@ class MF_MRDR_JL(nn.Module):
 
                         
                 pred = self.prediction_model.forward(sub_x)
-                imputation_y = self.imputation_model.predict(sub_x).to(self.device)
+                imputation_y = self.imputation_model.forward(sub_x)
                 
                 
                 x_sampled = x_all[ul_idxs[G*idx* self.batch_size : G*(idx+1)*self.batch_size]]
                                        
                 pred_u = self.prediction_model.forward(x_sampled) 
-                imputation_y1 = self.imputation_model.predict(x_sampled).to(self.device)
+                imputation_y1 = self.imputation_model.forward(x_sampled)
           
                 xent_loss = F.binary_cross_entropy(pred, sub_y, weight=inv_prop, reduction="sum") # o*eui/pui
                 imputation_loss = F.binary_cross_entropy(pred, imputation_y, reduction="sum")
@@ -1043,7 +1092,7 @@ class MF_MRDR_JL(nn.Module):
                      
                 epoch_loss += xent_loss.detach().cpu().numpy()                
 
-                pred = self.prediction_model.predict(sub_x).to(self.device)
+                pred = self.prediction_model.forward(sub_x)
                 imputation_y = self.imputation_model.forward(sub_x)
                 
                 e_loss = F.binary_cross_entropy(pred, sub_y, reduction="none")
@@ -1077,7 +1126,7 @@ class MF_MRDR_JL(nn.Module):
         return pred.detach().cpu().numpy()            
         
 
-
+# timing expriment
 # DR-BIAS 
 class MF_DR_BIAS(nn.Module):
     def __init__(self, num_users, num_items, batch_size, batch_size_prop, embedding_k=4, *args, **kwargs):
@@ -1449,6 +1498,7 @@ class mlp(nn.Module):
             return pred
 
 
+
 class MF_Minimax(nn.Module):
     def __init__(self, num_users, num_items, batch_size, batch_size_prop, embedding_k=4, embedding_k1=8, 
                  abc_model_name='logistic_regression', copy_model_pred=1, *args, **kwargs):
@@ -1610,7 +1660,18 @@ class MF_Minimax(nn.Module):
                 sub_x_tensor = torch.LongTensor(sub_x).to(self.device)
                 sub_y_tensor = torch.Tensor(sub_y).to(self.device)
                  
-                x_all_idx = ul_idxs[G*idx*self.batch_size:G*(idx+1)*self.batch_size]
+                # Add bounds checking to prevent index out of range
+                start_idx = G * idx * self.batch_size
+                end_idx = min(G * (idx + 1) * self.batch_size, len(ul_idxs))
+                
+                if start_idx >= len(ul_idxs):
+                    break  # No more samples available
+                    
+                x_all_idx = ul_idxs[start_idx:end_idx]
+                
+                if len(x_all_idx) == 0:
+                    continue  # Skip empty batches
+                    
                 x_sampled = x_all[x_all_idx]
                 x_sampled_tensor = torch.LongTensor(x_sampled).to(self.device)
                 obs_sampled = torch.Tensor(obs[x_all_idx]).to(self.device)
@@ -1707,3 +1768,332 @@ class MF_Minimax(nn.Module):
         x_tensor = torch.LongTensor(x).to(self.device)
         pred = self.model_pred.predict(x_tensor)
         return pred.detach().cpu().numpy()
+
+
+
+def ECELoss(scores, labels, n_bins=15):
+    bin_boundaries = torch.linspace(0, 1, n_bins + 1)
+    bin_lowers = bin_boundaries[:-1]
+    bin_uppers = bin_boundaries[1:]
+
+    predictions = scores.ge(torch.mul(torch.ones_like(scores), 0.5)).type(torch.IntTensor)
+    accuracies = predictions.eq(labels)
+
+    ece = torch.zeros(1)
+    for bin_lower, bin_upper in zip(bin_lowers, bin_uppers):
+        in_bin = scores.ge(bin_lower.item()) * scores.lt(bin_upper.item())
+        prop_in_bin = in_bin.float().mean()
+        if prop_in_bin.item() > 0:
+            accuracy_in_bin = accuracies[in_bin].float().mean()
+            avg_confidence_in_bin = scores[in_bin].mean()
+            if bin_upper < 0.501: # for binary classification
+                avg_confidence_in_bin = 1 - avg_confidence_in_bin
+            ece += torch.abs(avg_confidence_in_bin - accuracy_in_bin) * prop_in_bin
+    
+    return ece.cpu().data
+
+
+class MF_DR_JL_CE(nn.Module):
+    def __init__(self, num_users, num_items, batch_size, batch_size_prop, num_experts, embedding_k=4, *args, **kwargs):
+        super().__init__()
+        self.num_users = num_users
+        self.num_items = num_items
+        self.embedding_k = embedding_k
+        self.batch_size = batch_size
+        self.batch_size_prop = batch_size_prop
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        
+        self.prediction_model = MF_BaseModel(num_users = self.num_users, num_items = self.num_items, embedding_k=self.embedding_k, *args, **kwargs)
+        self.imputation_model = MF_BaseModel(num_users=self.num_users, num_items=self.num_items, embedding_k=self.embedding_k)
+        self.propensity_model = NCF_BaseModel(num_users = self.num_users, num_items = self.num_items, embedding_k=self.embedding_k, *args, **kwargs)
+        
+        self.sigmoid = torch.nn.Sigmoid()
+        self.xent_func = torch.nn.BCELoss()
+        
+        ## for calibration
+        self.num_experts = num_experts
+        self.prop_selection_net = nn.Sequential(nn.Linear(self.embedding_k, num_experts), nn.Softmax(dim=1))
+        self.imp_selection_net = nn.Sequential(nn.Linear(self.embedding_k, num_experts), nn.Softmax(dim=1))
+
+        self.a_prop = nn.Parameter(torch.FloatTensor([1 for i in range(num_experts)]))
+        self.b_prop = nn.Parameter(torch.FloatTensor([-1 for i in range(num_experts)]))
+        self.a_imp = nn.Parameter(torch.FloatTensor([1 for i in range(num_experts)]))
+        self.b_imp = nn.Parameter(torch.FloatTensor([-1 for i in range(num_experts)]))
+        
+        self.sm = nn.Softmax(dim = 1)
+        
+        # Move all models to device
+        self.to(self.device)
+     
+    def calibration_experts(self, x, T, mode='prop'):
+        # get emb
+        if mode == 'prop':
+            u_emb, _ = self.propensity_model.get_emb(x)
+            logit = self.propensity_model.forward_logit(x)
+        else:
+            u_emb, _ = self.imputation_model.get_emb(x)
+            logit = self.imputation_model.forward_logit(x)
+        
+        # get selection dist (Gumbel softmax)
+        if mode == 'prop':
+            selection_dist = self.prop_selection_net(u_emb) # (batch_size, num_experts)
+        else:
+            selection_dist = self.imp_selection_net(u_emb)
+        
+        g = torch.distributions.Gumbel(torch.tensor(0.0).to(self.device), torch.tensor(1.0).to(self.device)).sample(selection_dist.size())
+        eps = torch.tensor(1e-10).to(self.device) # for numerical stability
+        selection_dist = selection_dist + eps
+        selection_dist = self.sm((selection_dist.log() + g) / T) # (batch_size, num_experts) (row sum to 1)
+        
+        # calibration experts
+        logits = torch.unsqueeze(logit, 1) # (batch_size, 1)
+        logits = logits.repeat(1, self.num_experts) # (batch_size, num_experts)
+
+        if mode == 'prop':
+            expert_outputs = self.sigmoid(logits * self.a_prop + self.b_prop) # (batch_size, num_experts)
+        else:
+            expert_outputs = self.sigmoid(logits * self.a_imp + self.b_imp)
+        
+        expert_outputs = expert_outputs * selection_dist # (batch_size, num_experts)
+        expert_outputs = expert_outputs.sum(1) # (batch_size, )
+        
+        # [0, 1]
+        expert_outputs = expert_outputs - torch.lt(expert_outputs, 0) * expert_outputs
+        expert_outputs = expert_outputs - torch.gt(expert_outputs, 1) * (expert_outputs - torch.ones_like(expert_outputs).to(self.device))
+        
+        return expert_outputs
+        
+    def _compute_IPS(self, x, num_epoch=200, lr=0.05, lamb=0, tol=1e-4, verbose=False):
+        obs = sps.csr_matrix((np.ones(x.shape[0]), (x[:, 0], x[:, 1])), shape=(self.num_users, self.num_items), dtype=np.float32).toarray().reshape(-1)
+        optimizer_propensity = torch.optim.Adam(self.propensity_model.parameters(), lr=lr, weight_decay=lamb)
+        
+        last_loss = 1e9
+        
+        num_sample = len(obs) ## 전체 pair 개수 |D|
+        total_batch = num_sample // self.batch_size_prop
+        x_all = generate_total_sample(self.num_users, self.num_items)
+        early_stop = 0
+        
+        pbar = tqdm(range(num_epoch), desc="[MF-DRJL-CE-PS] Computing IPS", disable=not verbose)
+        for epoch in pbar:
+            # sampling counterfactuals
+            ul_idxs = np.arange(x_all.shape[0]) # all
+            np.random.shuffle(ul_idxs)
+
+            epoch_loss = 0
+            for idx in range(total_batch):
+                # mini-batch training
+                x_all_idx = ul_idxs[idx * self.batch_size_prop : (idx+1) * self.batch_size_prop]
+                
+                x_sampled = x_all[x_all_idx]
+                prop = self.propensity_model.forward(x_sampled)
+                sub_obs = obs[x_all_idx]
+                sub_obs = torch.Tensor(sub_obs).to(self.device)
+
+                prop_loss = nn.MSELoss()(prop, sub_obs)
+                optimizer_propensity.zero_grad()
+                prop_loss.backward()
+                optimizer_propensity.step()
+                
+                epoch_loss += prop_loss.detach().cpu().numpy()
+
+            pbar.set_postfix({'loss': epoch_loss})
+            
+            relative_loss_div = (last_loss-epoch_loss)/(last_loss+1e-10)
+            if  relative_loss_div < tol:
+                if early_stop > 5:
+                    if verbose:
+                        print("\n[MF-DRJL-CE-PS] epoch:{}, xent:{}".format(epoch, epoch_loss))
+                    break
+                early_stop += 1
+
+            last_loss = epoch_loss
+
+            if epoch == num_epoch - 1:
+                print("[MF-DRJL-CE-PS] Reach preset epochs, it seems does not converge.") 
+
+    def _calibrate_IPS_G(self, x_val, x_test, num_epoch=100, lr=0.01, lamb=0, end_T=1e-3, verbose=False, G=10):
+        x_all = generate_total_sample(self.num_users, self.num_items) # all (u,i) pairs = D
+        obs = sps.csr_matrix((np.ones(x_val.shape[0]), (x_val[:, 0], x_val[:, 1])), shape=(self.num_users, self.num_items), dtype=np.float32).toarray().reshape(-1)
+
+        t0 = time.time()
+        self.propensity_model.eval()
+        
+        ## data prep
+        ul_idxs = np.arange(x_all.shape[0]) # idxs
+        np.random.shuffle(ul_idxs)
+        neg_idxs = ul_idxs[:len(x_val) * G]
+        
+        ui_idxs = np.concatenate((x_all[neg_idxs], x_val), axis=0) # (u,i) pairs
+        sub_obs = torch.FloatTensor(np.concatenate((obs[neg_idxs], np.ones(len(x_val))), axis=0)).to(self.device) ## y (label)
+        
+        ## fit CE - Adam
+        optimizer = torch.optim.Adam([self.a_prop, self.b_prop] + list(self.prop_selection_net.parameters()), lr=lr, weight_decay=lamb)
+
+        total_batch = len(ui_idxs) // self.batch_size_prop
+        current_T = torch.tensor(1.).to(self.device)
+        for epoch in range(num_epoch):
+            epoch_loss = 0
+            for idx in range(total_batch):
+                # mini-batch training
+                batch_idx = ui_idxs[idx * self.batch_size_prop : (idx+1) * self.batch_size_prop]
+                batch_y = sub_obs[idx * self.batch_size_prop : (idx+1) * self.batch_size_prop]      
+                
+                prop = self.calibration_experts(batch_idx, current_T, mode='prop')
+                prop_loss = F.binary_cross_entropy(prop, batch_y)
+
+                optimizer.zero_grad()
+                prop_loss.backward()
+                optimizer.step()
+                
+                epoch_loss += prop_loss.detach().cpu().numpy()
+
+            current_T = torch.tensor(1. * ((end_T / 1.) ** (epoch / num_epoch))).to(self.device)
+            
+            if verbose:
+                if epoch % 10 == 0:    
+                    print("epoch:", epoch, "loss:", epoch_loss)
+        
+        if verbose:
+            print("calibraton done in", time.time() - t0)
+            
+            ## test ECE
+            obs = sps.csr_matrix((np.ones(x_test.shape[0]), (x_test[:, 0], x_test[:, 1])), shape=(self.num_users, self.num_items), dtype=np.float32).toarray().reshape(-1)
+
+            ul_idxs = np.arange(x_all.shape[0]) # idxs
+            np.random.shuffle(ul_idxs)
+            neg_idxs = ul_idxs[:len(x_test) * G]
+            
+            ui_idxs = np.concatenate((x_all[neg_idxs], x_test), axis=0) # (u,i) pairs            
+            sub_obs = np.concatenate((obs[neg_idxs], np.ones(len(x_test))), axis=0)
+
+            self.a_prop.requires_grad = False
+            self.b_prop.requires_grad = False
+            for param in self.prop_selection_net.parameters():
+                param.requires_grad = False
+            scores_uncal = self.propensity_model.forward(ui_idxs).detach().cpu()
+            scores_cal = self.calibration_experts(ui_idxs, current_T, mode='prop').detach().cpu()
+            
+            print(scores_uncal.mean(), scores_uncal.std())
+            print(scores_uncal)
+            print(scores_cal.mean(), scores_cal.std())
+            print(scores_cal)
+            
+            ECE_uncal = ECELoss(scores_uncal, torch.LongTensor(sub_obs))
+            ECE_cal = ECELoss(scores_cal, torch.LongTensor(sub_obs))
+            print("test ECE:", ECE_uncal, ECE_cal)
+
+    def fit(self, x, y, x_val, y_val, stop = 5, num_epoch=1000, lr=0.05, lamb=0, gamma = 0.1, tol=1e-4, G=1, end_T=1e-3, lr_imp=0.05, lamb_imp=0, lr_impcal=0.05, lamb_impcal=0, iter_impcal=10, verbose=False, cal=True): 
+        optimizer_prediction = torch.optim.Adam(self.prediction_model.parameters(), lr=lr, weight_decay=lamb)
+        optimizer_imputation = torch.optim.Adam(self.imputation_model.parameters(), lr=lr_imp, weight_decay=lamb_imp)
+        optimizer_impcal = torch.optim.Adam([self.a_imp, self.b_imp] + list(self.imp_selection_net.parameters()), lr=lr_impcal, weight_decay=lamb_impcal)
+        self.propensity_model.eval()
+        
+        x_all = generate_total_sample(self.num_users, self.num_items) ## D
+        num_sample = len(x) # O
+        total_batch = num_sample // self.batch_size
+
+        early_stop = 0
+        last_loss = 1e9
+        current_T = torch.tensor(1.).to(self.device)
+        
+        pbar = tqdm(range(num_epoch), desc="[MF-DR-JL-CE] Training", disable=not verbose)
+        for epoch in pbar: 
+            # O
+            all_idx = np.arange(num_sample)
+            np.random.shuffle(all_idx)
+
+            # D
+            ul_idxs = np.arange(x_all.shape[0])
+            np.random.shuffle(ul_idxs)
+            
+            epoch_loss = 0
+            for idx in range(total_batch):
+                ## prediction model update
+                self.prediction_model.train()
+                self.imputation_model.eval()
+                # O part (if o_ui=1)
+                selected_idx = all_idx[self.batch_size*idx:(idx+1)*self.batch_size]
+                sub_x = x[selected_idx]
+                sub_y = y[selected_idx]
+                sub_y = torch.Tensor(sub_y).to(self.device)
+                
+                inv_prop = 1/torch.clip(self.calibration_experts(sub_x, 1e-3, mode='prop').detach(), gamma, 1)
+                
+                pred = self.prediction_model.forward(sub_x)
+
+                imputation_y = self.calibration_experts(sub_x, current_T, mode='imp')
+                              
+                xent_loss = F.binary_cross_entropy(pred, sub_y, weight=inv_prop, reduction="sum") # e/p
+                imputation_loss = F.binary_cross_entropy(pred, torch.clip(imputation_y,0,1), reduction="sum") # e^
+                ips_loss = (xent_loss - imputation_loss) # batch size, e/p - e^ (current) <<<<===>>>> e/p - e^/p + e^ (paper)
+
+                # D part (if o_ui=0)
+                x_sampled = x_all[ul_idxs[G*idx* self.batch_size : G*(idx+1)*self.batch_size]] # negative ratio=G
+                
+                pred_u = self.prediction_model.forward(x_sampled) 
+                imputation_y1 = self.calibration_experts(x_sampled, current_T, mode='imp')
+                direct_loss = F.binary_cross_entropy(pred_u, torch.clip(imputation_y1,0,1), reduction="sum")
+    
+                # total loss
+                loss = ips_loss/self.batch_size + direct_loss/self.batch_size #/G
+
+                optimizer_prediction.zero_grad()
+                loss.backward()
+                optimizer_prediction.step()
+                                                           
+                epoch_loss += xent_loss.detach().cpu().numpy()              
+                
+                ## imputation model update (O)
+                self.prediction_model.eval()
+                self.imputation_model.train()
+                pred = self.prediction_model.predict(sub_x).to(self.device) ## prediction: y_hat
+                imputation_y = self.imputation_model.forward(sub_x) ## pseudo label: y_tilde
+                
+                e_loss = F.binary_cross_entropy(pred, sub_y, reduction="none") ## actual loss: e
+                e_hat_loss = F.binary_cross_entropy(imputation_y, pred, reduction="none") ## imputed loss: e_hat
+                imp_loss = (((e_loss.detach() - e_hat_loss) ** 2) * inv_prop).sum() ## error deviation: (e - e_hat)^2 / p  -> loss function for imputation model
+
+                optimizer_imputation.zero_grad()
+                imp_loss.backward()
+                optimizer_imputation.step()
+
+            ## imputation model calibration (O) + Propensity (하는게 성능 더 좋긴해 in coat)
+            if cal:
+                self.imputation_model.eval()
+                inv_prop = 1/torch.clip(self.calibration_experts(x_val, 1e-3, mode='prop').detach(), gamma, 1)
+                
+                for i in range(iter_impcal):
+                    prop = self.calibration_experts(x_val, current_T, mode='imp')
+                    prop_loss = F.binary_cross_entropy(prop, torch.FloatTensor(y_val).to(self.device), weight=inv_prop, reduction="sum")
+
+                    optimizer_impcal.zero_grad()
+                    prop_loss.backward()
+                    optimizer_impcal.step()
+                    
+                current_T = torch.tensor(1. * ((end_T / 1.) ** (epoch / num_epoch))).to(self.device)
+
+            pbar.set_postfix({'loss': epoch_loss})
+            
+            ## early stop
+            relative_loss_div = (last_loss-epoch_loss)/(last_loss+1e-10)
+            if  relative_loss_div < tol:
+                if early_stop > stop:
+                    if verbose:
+                        print("\n[MF-DR-JL-CE] epoch:{}, xent:{}".format(epoch, epoch_loss))
+                    break
+                else:
+                    early_stop += 1
+
+            last_loss = epoch_loss
+
+            if epoch % 10 == 0 and verbose:
+                print("[MF-DR-JL-CE] epoch:{}, xent:{}".format(epoch, epoch_loss))
+
+            if epoch == num_epoch - 1:
+                print("[MF-DR-JL-CE] Reach preset epochs, it seems does not converge.")
+                
+    def predict(self, x):
+        pred = self.prediction_model.predict(x)
+        return pred.detach().cpu().numpy()
+    

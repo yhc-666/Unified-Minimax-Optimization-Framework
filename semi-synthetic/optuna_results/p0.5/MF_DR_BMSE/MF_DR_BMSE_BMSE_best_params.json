@@ -1,0 +1,26 @@
+{
+  "model": "MF_DR_BMSE",
+  "objective": "BMSE",
+  "best_value": 0.06836601346731186,
+  "trial_number": 25,
+  "params": {
+    "epochs": 150,
+    "prop_epochs": 100,
+    "lr": 0.1,
+    "prop_lr": 0.005,
+    "batch_size": 128,
+    "embedding_k": 4,
+    "gamma": 0.1,
+    "G": 2,
+    "bmse_weight": 20
+  },
+  "all_metrics": {
+    "ECE": 0.19301463663578033,
+    "BMSE": 0.06836601346731186,
+    "DR_Bias": 0.055024389177560806,
+    "DR_Variance": 1.6420386600657366e-05,
+    "MSE": 0.07935775071382523,
+    "MAE": 0.21744698286056519,
+    "training_time": 75.64175295829773
+  }
+}

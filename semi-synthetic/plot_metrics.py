@@ -77,8 +77,8 @@ def create_bar_chart(df_normalized, metrics, output_path='metric_comparison.png'
     
     # Set x-axis labels
     metric_labels = {
-        'ECE': 'Calibration Error (ECE)',
-        'BMSE': 'Balancing Error (BMSE)', 
+        'ECE': 'Calibration Error',
+        'BMSE': 'Balancing Error', 
         'DR_Bias': 'DR Bias',
         'DR_Variance': 'DR Variance'
     }
@@ -116,7 +116,7 @@ def create_bar_chart(df_normalized, metrics, output_path='metric_comparison.png'
 
 def main():
     parser = argparse.ArgumentParser(description='Plot normalized metrics from evaluation results')
-    parser.add_argument('--input', type=str, default='evaluation_results.csv',
+    parser.add_argument('--input', type=str, default='evaluation_results_p0.4.csv',
                        help='Path to evaluation results CSV file')
     parser.add_argument('--output', type=str, default='metric_comparison.png',
                        help='Output path for the plot')

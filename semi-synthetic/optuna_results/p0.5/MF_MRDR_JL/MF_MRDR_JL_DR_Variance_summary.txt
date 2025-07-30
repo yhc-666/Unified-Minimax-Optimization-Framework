@@ -1,0 +1,72 @@
+Optuna Hyperparameter Optimization Summary
+============================================================
+
+Model: MF_MRDR_JL
+Objective: DR_Variance (minimize)
+Number of trials: 100
+Best value: 0.000004
+Best trial: 93
+
+Best Parameters:
+----------------------------------------
+epochs: 150
+prop_epochs: 100
+lr: 0.001
+prop_lr: 0.01
+batch_size: 256
+embedding_k: 4
+gamma: 0.1
+G: 8
+
+All Metrics for Best Trial:
+----------------------------------------
+ECE: 0.189105
+BMSE: 0.850075
+DR_Bias: 0.005480
+DR_Variance: 0.000004
+MSE: 0.019688
+MAE: 0.105816
+training_time: 96.837147
+
+Top 5 Trials:
+----------------------------------------
+
+Trial 93:
+  DR_Variance: 0.000004
+  epochs: 150
+  lr: 0.001
+  embedding_k: 4
+  gamma: 0.1
+  G: 8
+
+Trial 61:
+  DR_Variance: 0.000005
+  epochs: 150
+  lr: 0.001
+  embedding_k: 4
+  gamma: 0.1
+  G: 8
+
+Trial 59:
+  DR_Variance: 0.000005
+  epochs: 150
+  lr: 0.001
+  embedding_k: 4
+  gamma: 0.1
+  G: 8
+
+Trial 63:
+  DR_Variance: 0.000005
+  epochs: 150
+  lr: 0.001
+  embedding_k: 4
+  gamma: 0.1
+  G: 8
+
+Trial 85:
+  DR_Variance: 0.000005
+  epochs: 150
+  lr: 0.001
+  embedding_k: 4
+  gamma: 0.2
+  G: 8

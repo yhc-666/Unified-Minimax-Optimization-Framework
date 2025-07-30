@@ -34,10 +34,10 @@ HYPERPARAM_RANGES = {
         'impu_lr': [0.005, 0.01],
         'prop_lr': [0.005, 0.01],
         'dis_lr': [0.005, 0.01],
-        'lamb_pred': (1e-4, 1e-1),
-        'lamb_imp': (1e-4, 1e-1),
-        'lamb_prop': (1e-4, 1e-1),
-        'dis_lamb': (1e-4, 1e-1),
+        'lamb_pred': [1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3],
+        'lamb_imp': [1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3],
+        'lamb_prop': [1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3],
+        'dis_lamb': [1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3],
         'gamma': (0.01, 0.05),
         'beta': [0.01, 0.05, 0.1, 0.5, 1, 5, 10, 50, 100],
         'G': [1, 2, 4, 6, 8, 10, 12],
@@ -52,10 +52,10 @@ HYPERPARAM_RANGES = {
         'impu_lr': [0.005, 0.01],
         'prop_lr': [0.005, 0.01],
         'dis_lr': [0.005, 0.01],
-        'lamb_pred': (1e-4, 1e-1),
-        'lamb_imp': (1e-4, 1e-1),
-        'lamb_prop': (1e-4, 1e-1),
-        'dis_lamb': (1e-4, 1e-1),
+        'lamb_pred': [1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3],
+        'lamb_imp': [1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3],
+        'lamb_prop': [1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3],
+        'dis_lamb': [1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3],
         'gamma': (0.01, 0.05),
         'beta': [0.01, 0.05, 0.1, 0.5, 1, 5, 10, 50, 100],
         'G': [1, 2, 4, 6, 8, 10, 12],
@@ -70,10 +70,10 @@ HYPERPARAM_RANGES = {
         'impu_lr': [0.005, 0.01],
         'prop_lr': [0.005, 0.01],
         'dis_lr': [0.005, 0.01],
-        'lamb_pred': (1e-4, 1e-1),
-        'lamb_imp': (1e-4, 1e-1),
-        'lamb_prop': (1e-4, 1e-1),
-        'dis_lamb': (1e-4, 1e-1),
+        'lamb_pred': [1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3],
+        'lamb_imp': [1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3],
+        'lamb_prop': [1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3],
+        'dis_lamb': [1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3],
         'gamma': (0.01, 0.05),
         'beta': [0.01, 0.05, 0.1, 0.5, 1, 5, 10, 50, 100],
         'G': [1, 2, 4, 6, 8, 10, 12],
@@ -87,7 +87,7 @@ def train_and_eval_with_params(dataset_name, train_args, model_args):
     """Train and evaluate model with given hyperparameters"""
     
     # Set up data based on dataset
-    top_k_list = [5, 10]
+    top_k_list = [5]
     
     if dataset_name == "coat":
         train_mat, test_mat = load_data("coat")        
@@ -106,15 +106,15 @@ def train_and_eval_with_params(dataset_name, train_args, model_args):
         x_train, y_train, x_test, y_test = load_data("kuai")
         num_user = x_train[:,0].max() + 1
         num_item = x_train[:,1].max() + 1
-        top_k_list = [50, 100]
+        top_k_list = [20]
 
     # Binarize ratings
     if dataset_name == "kuai":
-        y_train = binarize(y_train, 1)
-        y_test = binarize(y_test, 1)
+        y_train = binarize(y_train, 2)
+        y_test = binarize(y_test, 2)
     else:
-        y_train = binarize(y_train)
-        y_test = binarize(y_test)
+        y_train = binarize(y_train, 3)
+        y_test = binarize(y_test, 3)
 
     # Create model
     mf = MF_Minimax(num_user, num_item, 
@@ -214,10 +214,10 @@ def objective(trial, args):
         'impu_lr': trial.suggest_categorical('impu_lr', ranges['impu_lr']),
         'prop_lr': trial.suggest_categorical('prop_lr', ranges['prop_lr']),
         'dis_lr': trial.suggest_categorical('dis_lr', ranges['dis_lr']),
-        'lamb_pred': trial.suggest_float('lamb_pred', *ranges['lamb_pred'], log=True),
-        'lamb_imp': trial.suggest_float('lamb_imp', *ranges['lamb_imp'], log=True),
-        'lamb_prop': trial.suggest_float('lamb_prop', *ranges['lamb_prop'], log=True),
-        'dis_lamb': trial.suggest_float('dis_lamb', *ranges['dis_lamb']),
+        'lamb_pred': trial.suggest_categorical('lamb_pred', ranges['lamb_pred']),
+        'lamb_imp': trial.suggest_categorical('lamb_imp', ranges['lamb_imp']),
+        'lamb_prop': trial.suggest_categorical('lamb_prop', ranges['lamb_prop']),
+        'dis_lamb': trial.suggest_categorical('dis_lamb', ranges['dis_lamb']),
         'abc_model_name': trial.suggest_categorical('abc_model_name', ranges['abc_model_name']),
         'copy_model_pred': 1
     }
@@ -292,10 +292,10 @@ def parse_args():
                         help='Number of optuna trials')
     parser.add_argument('--metrics', type=str, nargs='+', default=['auc'],
                         choices=['auc', 'ndcg', 'recall', 'f1', 'mse', 'mae', 'precision',
-                                 'ndcg_5', 'ndcg_10', 'ndcg_50', 'ndcg_100',
-                                 'precision_5', 'precision_10', 'precision_50', 'precision_100',
-                                 'recall_5', 'recall_10', 'recall_50', 'recall_100',
-                                 'f1_5', 'f1_10', 'f1_50', 'f1_100'],
+                                 'ndcg_5', 'ndcg_10', 'ndcg_20', 'ndcg_50', 'ndcg_100',
+                                 'precision_5', 'precision_10', 'precision_20', 'precision_50', 'precision_100',
+                                 'recall_5', 'recall_10', 'recall_20', 'recall_50', 'recall_100',
+                                 'f1_5', 'f1_10', 'f1_20', 'f1_50', 'f1_100'],
                         help='Metrics to optimize (can specify multiple)')
     parser.add_argument('--directions', type=str, nargs='+', default=['maximize'],
                         choices=['maximize', 'minimize'],

@@ -1,0 +1,25 @@
+{
+  "model": "MF_DR_BIAS",
+  "objective": "DR_Bias",
+  "best_value": 0.00011615383118623868,
+  "trial_number": 96,
+  "params": {
+    "epochs": 150,
+    "prop_epochs": 100,
+    "lr": 0.01,
+    "prop_lr": 0.001,
+    "batch_size": 256,
+    "embedding_k": 4,
+    "gamma": 0.05,
+    "G": 10
+  },
+  "all_metrics": {
+    "ECE": 0.21879151463508606,
+    "BMSE": 3.490126848220825,
+    "DR_Bias": 0.00011615383118623868,
+    "DR_Variance": 6.453300738940015e-05,
+    "MSE": 0.07415561378002167,
+    "MAE": 0.19974984228610992,
+    "training_time": 84.47188401222229
+  }
+}

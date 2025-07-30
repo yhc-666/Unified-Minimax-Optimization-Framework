@@ -1,50 +1,48 @@
 Dataset: coat
-Metrics: auc (maximize)
-Number of trials: 2
+Metrics: auc (maximize), ndcg_5 (maximize), f1_5 (maximize)
+Number of trials: 3
 Number of Pareto optimal solutions: 1
 
 ============================================================
 PARETO OPTIMAL SOLUTIONS
 ============================================================
 
-Pareto Solution #1 (Trial 0):
+Pareto Solution #1 (Trial 1):
 ----------------------------------------
 Objective values:
-  auc: 0.593911
+  auc: 0.667585
+  ndcg_5: 0.628205
+  f1_5: 0.472901
 
 All metrics:
-  mse: 0.245808
-  mae: 0.494657
-  auc: 0.593911
-  ndcg_5: 0.564095
-  precision_5: 0.475172
-  recall_5: 0.379113
-  f1_5: 0.421742
-  ndcg_10: 0.633939
-  precision_10: 0.430345
-  recall_10: 0.654121
-  f1_10: 0.519145
-  ndcg: 0.564095
-  precision: 0.475172
-  recall: 0.379113
-  f1: 0.421742
-  training_time: 6.715036
+  mse: 0.248094
+  mae: 0.421447
+  auc: 0.667585
+  ndcg_5: 0.628205
+  precision_5: 0.514483
+  recall_5: 0.437537
+  f1_5: 0.472901
+  ndcg: 0.628205
+  precision: 0.514483
+  recall: 0.437537
+  f1: 0.472901
+  training_time: 12.042712
 
 Parameters:
   batch_size: 128
-  gamma: 0.049451073154463954
-  G: 1
-  beta: 0.01
-  num_bins: 20
-  embedding_k: 64
+  gamma: 0.045939891935728616
+  G: 12
+  beta: 5
+  num_bins: 10
+  embedding_k: 16
   embedding_k1: 32
   pred_lr: 0.005
-  impu_lr: 0.005
-  prop_lr: 0.005
-  dis_lr: 0.01
-  lamb_pred: 0.008673275959550203
-  lamb_imp: 0.005628401799226312
-  lamb_prop: 0.010116961109173598
-  dis_lamb: 0.017861482756949088
+  impu_lr: 0.01
+  prop_lr: 0.01
+  dis_lr: 0.005
+  lamb_pred: 1e-05
+  lamb_imp: 0.0001
+  lamb_prop: 0.0005
+  dis_lamb: 0.005
   abc_model_name: logistic_regression
 

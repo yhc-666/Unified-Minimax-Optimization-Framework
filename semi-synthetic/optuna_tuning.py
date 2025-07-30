@@ -194,7 +194,7 @@ def save_best_params(study: optuna.Study, args):
 def save_summary(study: optuna.Study, args, data_splits: Dict):
     """Save optimization summary to text file."""
     
-    output_dir = os.path.join('optuna_results', args.model)
+    output_dir = os.path.join('semi-synthetic/optuna_results', args.model)
     os.makedirs(output_dir, exist_ok=True)
     
     summary_path = os.path.join(output_dir, f'{args.model}_{args.objective}_summary.txt')
@@ -245,7 +245,7 @@ def parse_args():
                        choices=['MF_DR_JL', 'MF_MRDR_JL', 'MF_Minimax', 'MF_DR_BIAS', 'MF_DR_BMSE', 'MF_DR_DCE'],
                        help='Model to optimize')
     parser.add_argument('--objective', type=str, required=True,
-                       choices=['ECE', 'BMSE', 'DR_Bias', 'DR_Variance'],
+                       choices=['ECE', 'BMSE', 'DR_Bias', 'DR_Variance', 'MSE'],
                        help='Objective metric to optimize')
     parser.add_argument('--direction', type=str, default='minimize',
                        choices=['minimize', 'maximize'],
@@ -351,12 +351,15 @@ def main():
     for param, value in study.best_params.items():
         print(f"  {param}: {value}")
     
-    output_dir = os.path.join('optuna_results', args.model)
+    output_dir = os.path.join('semi-synthetic/optuna_results/p0.6', args.model)
     print(f"\nResults saved to: {output_dir}")
 
 
 if __name__ == "__main__":
     main()
 
-#   python semi-synthetic/optuna_tuning.py --model MF_DR_JL --objective ECE --n_trials 100 --save_all_trials
-#   python semi-synthetic/optuna_tuning.py --model MF_DR_BMSE --objective BMSE --n_trials 60 --save_all_trials
+#   python semi-synthetic/optuna_tuning.py --model MF_DR_BIAS --objective DR_Bias --n_trials 100 --save_all_trials
+#   python semi-synthetic/optuna_tuning.py --model MF_DR_BMSE --objective BMSE --n_trials 100 --save_all_trials
+#   python semi-synthetic/optuna_tuning.py --model MF_Minimax --objective MSE --n_trials 100 --save_all_trials
+#   python semi-synthetic/optuna_tuning.py --model MF_MRDR_JL --objective DR_Variance --n_trials 100 --save_all_trials
+#   python semi-synthetic/optuna_tuning.py --model MF_DR_DCE --objective ECE --n_trials 100 --save_all_trials

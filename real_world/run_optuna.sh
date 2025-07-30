@@ -5,21 +5,21 @@
 
 python real_world/optuna_search.py \
     --dataset coat \
-    --metrics auc \
-    --directions maximize \
-    --n_trials 2 \
+    --metrics auc ndcg_5 f1_5 \
+    --directions maximize maximize maximize \
+    --n_trials 300 \
     --save_all_trials
 
 python real_world/optuna_search.py \
     --dataset yahoo \
-    --metrics auc mse ndcg_5 ndcg_10 \
-    --directions maximize minimize maximize maximize \
-    --n_trials 100 \
+    --metrics auc ndcg_5 f1_5 \
+    --directions maximize maximize maximize \
+    --n_trials 300 \
     --save_all_trials
 
 python real_world/optuna_search.py \
     --dataset kuai \
-    --metrics auc mse ndcg_50 ndcg_100 \
-    --directions maximize minimize maximize maximize \
-    --n_trials 100 \
+    --metrics auc ndcg_20 f1_20 \
+    --directions maximize maximize maximize \
+    --n_trials 300 \
     --save_all_trials

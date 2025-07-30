@@ -1,0 +1,72 @@
+Optuna Hyperparameter Optimization Summary
+============================================================
+
+Model: MF_DR_BIAS
+Objective: DR_Bias (minimize)
+Number of trials: 100
+Best value: 0.000116
+Best trial: 96
+
+Best Parameters:
+----------------------------------------
+epochs: 150
+prop_epochs: 100
+lr: 0.01
+prop_lr: 0.001
+batch_size: 256
+embedding_k: 4
+gamma: 0.05
+G: 10
+
+All Metrics for Best Trial:
+----------------------------------------
+ECE: 0.218792
+BMSE: 3.490127
+DR_Bias: 0.000116
+DR_Variance: 0.000065
+MSE: 0.074156
+MAE: 0.199750
+training_time: 84.471884
+
+Top 5 Trials:
+----------------------------------------
+
+Trial 96:
+  DR_Bias: 0.000116
+  epochs: 150
+  lr: 0.01
+  embedding_k: 4
+  gamma: 0.05
+  G: 10
+
+Trial 99:
+  DR_Bias: 0.002651
+  epochs: 150
+  lr: 0.01
+  embedding_k: 4
+  gamma: 0.05
+  G: 10
+
+Trial 82:
+  DR_Bias: 0.003931
+  epochs: 150
+  lr: 0.01
+  embedding_k: 4
+  gamma: 0.05
+  G: 2
+
+Trial 80:
+  DR_Bias: 0.005329
+  epochs: 150
+  lr: 0.01
+  embedding_k: 4
+  gamma: 0.05
+  G: 2
+
+Trial 84:
+  DR_Bias: 0.010819
+  epochs: 150
+  lr: 0.01
+  embedding_k: 4
+  gamma: 0.05
+  G: 2

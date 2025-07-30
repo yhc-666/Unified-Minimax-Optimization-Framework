@@ -1,0 +1,73 @@
+Optuna Hyperparameter Optimization Summary
+============================================================
+
+Model: MF_Minimax
+Objective: MSE (minimize)
+Number of trials: 100
+Best value: 0.042979
+Best trial: 97
+
+Best Parameters:
+----------------------------------------
+epochs: 150
+prop_epochs: 100
+lr: 0.05
+prop_lr: 0.001
+batch_size: 64
+embedding_k: 4
+gamma: 0.1
+G: 6
+beta: 10
+
+All Metrics for Best Trial:
+----------------------------------------
+ECE: 0.223194
+BMSE: 5.936256
+DR_Bias: 0.028214
+DR_Variance: 0.000053
+MSE: 0.042979
+MAE: 0.156839
+training_time: 136.768240
+
+Top 5 Trials:
+----------------------------------------
+
+Trial 97:
+  MSE: 0.042979
+  epochs: 150
+  lr: 0.05
+  embedding_k: 4
+  gamma: 0.1
+  G: 6
+
+Trial 98:
+  MSE: 0.048782
+  epochs: 150
+  lr: 0.05
+  embedding_k: 4
+  gamma: 0.05
+  G: 6
+
+Trial 35:
+  MSE: 0.049834
+  epochs: 150
+  lr: 0.05
+  embedding_k: 8
+  gamma: 0.1
+  G: 10
+
+Trial 75:
+  MSE: 0.050004
+  epochs: 150
+  lr: 0.05
+  embedding_k: 8
+  gamma: 0.1
+  G: 10
+
+Trial 61:
+  MSE: 0.050478
+  epochs: 150
+  lr: 0.05
+  embedding_k: 8
+  gamma: 0.1
+  G: 10

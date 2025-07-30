@@ -19,8 +19,8 @@ mae_func = lambda x,y: np.mean(np.abs(x-y))
 
 def train_and_eval(dataset_name, train_args, model_args):
     
-    top_k_list = [5, 10]
-    top_k_names = ("precision_5", "recall_5", "ndcg_5", "f1_5", "precision_10", "recall_10", "ndcg_10", "f1_10")
+    top_k_list = [5]
+    top_k_names = ("precision_5", "recall_5", "ndcg_5", "f1_5")
     if dataset_name == "coat":
         train_mat, test_mat = load_data("coat")        
         x_train, y_train = rating_mat_to_sample(train_mat)
@@ -38,8 +38,8 @@ def train_and_eval(dataset_name, train_args, model_args):
         x_train, y_train, x_test, y_test = load_data("kuai")
         num_user = x_train[:,0].max() + 1
         num_item = x_train[:,1].max() + 1
-        top_k_list = [50, 100]
-        top_k_names = ("precision_50", "recall_50", "ndcg_50", "f1_50", "precision_100", "recall_100", "ndcg_100", "f1_100")
+        top_k_list = [20]
+        top_k_names = ("precision_20", "recall_20", "ndcg_20", "f1_20")
 
     np.random.seed(2020)
     torch.manual_seed(2020)

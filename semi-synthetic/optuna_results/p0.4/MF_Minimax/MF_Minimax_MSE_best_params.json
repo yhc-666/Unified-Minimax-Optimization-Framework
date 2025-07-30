@@ -1,0 +1,26 @@
+{
+  "model": "MF_Minimax",
+  "objective": "MSE",
+  "best_value": 0.042979102581739426,
+  "trial_number": 97,
+  "params": {
+    "epochs": 150,
+    "prop_epochs": 100,
+    "lr": 0.05,
+    "prop_lr": 0.001,
+    "batch_size": 64,
+    "embedding_k": 4,
+    "gamma": 0.1,
+    "G": 6,
+    "beta": 10
+  },
+  "all_metrics": {
+    "ECE": 0.22319431602954865,
+    "BMSE": 5.936255931854248,
+    "DR_Bias": 0.028213530778884888,
+    "DR_Variance": 5.327388862497173e-05,
+    "MSE": 0.042979102581739426,
+    "MAE": 0.15683862566947937,
+    "training_time": 136.76824021339417
+  }
+}

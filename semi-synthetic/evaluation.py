@@ -21,7 +21,7 @@ warnings.filterwarnings('ignore')
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import models from real_world
-from real_world.matrix_factorization_DT import MF_DR_JL, MF_MRDR_JL, MF_Minimax, MF_DR_BIAS, MF_DR_BMSE, MF_DR_DCE
+from real_world.matrix_factorization_DT import MF_DR_JL, MF_MRDR_JL, MF_Minimax, MF_DR_BIAS, MF_DR_BMSE, MF_DR_DCE, MF_DR_JL_CE
 
 # ----------- util functions for 4 error metrics ------------
 # 1. ECE
@@ -190,7 +190,7 @@ def load_data(data_dir: str = "data", verbose: bool = True) -> Tuple[np.ndarray,
     
     # Calculate propensity scores with correct formula
     propensity = np.copy(ground_truth)
-    p = 0.5
+    p = 0.6
     propensity[np.where(propensity == 0.9)] = p ** 1  # 0.5
     propensity[np.where(propensity == 0.7)] = p ** 2  # 0.25
     propensity[np.where(propensity == 0.5)] = p ** 3  # 0.125

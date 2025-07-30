@@ -1,0 +1,25 @@
+{
+  "model": "MF_MRDR_JL",
+  "objective": "DR_Variance",
+  "best_value": 4.03392368752975e-06,
+  "trial_number": 93,
+  "params": {
+    "epochs": 150,
+    "prop_epochs": 100,
+    "lr": 0.001,
+    "prop_lr": 0.01,
+    "batch_size": 256,
+    "embedding_k": 4,
+    "gamma": 0.1,
+    "G": 8
+  },
+  "all_metrics": {
+    "ECE": 0.18910524249076843,
+    "BMSE": 0.8500746488571167,
+    "DR_Bias": 0.005480195861309767,
+    "DR_Variance": 4.03392368752975e-06,
+    "MSE": 0.019687823951244354,
+    "MAE": 0.10581577569246292,
+    "training_time": 96.8371467590332
+  }
+}

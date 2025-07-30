@@ -1,2 +1,2 @@
-trial_number,pareto_rank,auc,G,abc_model_name,batch_size,beta,dis_lamb,dis_lr,embedding_k,embedding_k1,gamma,impu_lr,lamb_imp,lamb_pred,lamb_prop,num_bins,pred_lr,prop_lr
-0,1,0.5939105322702003,1,logistic_regression,128,0.01,0.017861482756949088,0.01,64,32,0.049451073154463954,0.005,0.005628401799226312,0.008673275959550203,0.010116961109173598,20,0.005,0.005
+trial_number,pareto_rank,auc,ndcg_5,f1_5,G,abc_model_name,batch_size,beta,dis_lamb,dis_lr,embedding_k,embedding_k1,gamma,impu_lr,lamb_imp,lamb_pred,lamb_prop,num_bins,pred_lr,prop_lr
+1,1,0.6675847672250667,0.6282052627987031,0.4729005703623058,12,logistic_regression,128,5,0.005,0.005,16,32,0.045939891935728616,0.01,0.0001,1e-05,0.0005,10,0.005,0.01

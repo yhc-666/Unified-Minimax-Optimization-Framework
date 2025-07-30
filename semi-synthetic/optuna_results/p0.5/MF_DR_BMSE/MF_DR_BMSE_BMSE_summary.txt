@@ -1,0 +1,73 @@
+Optuna Hyperparameter Optimization Summary
+============================================================
+
+Model: MF_DR_BMSE
+Objective: BMSE (minimize)
+Number of trials: 60
+Best value: 0.068366
+Best trial: 25
+
+Best Parameters:
+----------------------------------------
+epochs: 150
+prop_epochs: 100
+lr: 0.1
+prop_lr: 0.005
+batch_size: 128
+embedding_k: 4
+gamma: 0.1
+G: 2
+bmse_weight: 20
+
+All Metrics for Best Trial:
+----------------------------------------
+ECE: 0.193015
+BMSE: 0.068366
+DR_Bias: 0.055024
+DR_Variance: 0.000016
+MSE: 0.079358
+MAE: 0.217447
+training_time: 75.641753
+
+Top 5 Trials:
+----------------------------------------
+
+Trial 25:
+  BMSE: 0.068366
+  epochs: 150
+  lr: 0.1
+  embedding_k: 4
+  gamma: 0.1
+  G: 2
+
+Trial 13:
+  BMSE: 0.068925
+  epochs: 150
+  lr: 0.1
+  embedding_k: 4
+  gamma: 0.1
+  G: 2
+
+Trial 12:
+  BMSE: 0.075852
+  epochs: 150
+  lr: 0.005
+  embedding_k: 4
+  gamma: 0.1
+  G: 2
+
+Trial 11:
+  BMSE: 0.081813
+  epochs: 150
+  lr: 0.005
+  embedding_k: 4
+  gamma: 0.1
+  G: 2
+
+Trial 21:
+  BMSE: 0.083624
+  epochs: 150
+  lr: 0.005
+  embedding_k: 4
+  gamma: 0.1
+  G: 2
