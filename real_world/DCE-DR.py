@@ -304,4 +304,4 @@ if __name__ == "__main__":
     train_and_eval(args.dataset, args.train_args, args.model_args)
 
 
-# python real_world/DCE-DR.py --dataset coat
+# python real_world/DCE-DR.py --dataset yahoo

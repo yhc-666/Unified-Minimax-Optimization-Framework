@@ -199,3 +199,5 @@ if __name__ == "__main__":
     para(args=args)
 
     train_and_eval(args.dataset, args.train_args, args.model_args)
+
+# python real_world/DR-JL.py --dataset yahoo
