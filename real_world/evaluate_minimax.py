@@ -588,4 +588,4 @@ def main():
 if __name__ == "__main__":
     main()
 
-# python real_world/evaluate_minimax.py --dataset yahoo --hyperparam num_bins --values 1 3 5 10 15 20 25
+# python real_world/evaluate_minimax.py --dataset yahoo --hyperparam num_bins --values 1 3 5 8 10 12 15 18 20 25 30 35 40 45

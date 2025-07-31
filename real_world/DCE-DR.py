@@ -282,9 +282,9 @@ def para(args):
         args.model_args = {
             "embedding_k": 64,              # Larger embeddings for complex interactions
             "num_experts": 10,              # More experts for complex data
-            "lr_pred": 0.05,                # Higher learning rate
-            "lr_imp": 0.05,                 # Higher learning rate
-            "lr_prop": 0.01,                # Standard learning rate for propensity
+            "lr_pred": 0.02,                # Higher learning rate
+            "lr_imp": 0.02,                 # Higher learning rate
+            "lr_prop": 0.04,                # Standard learning rate for propensity
             "lr_cal": 0.01,                 # Learning rate for calibration
             "lr_impcal": 0.05,              # Learning rate for imputation calibration
             "lamb_prop": 1e-4,              # Weight decay for propensity
@@ -304,4 +304,4 @@ if __name__ == "__main__":
     train_and_eval(args.dataset, args.train_args, args.model_args)
 
 
-# python real_world/DCE-DR.py --dataset yahoo
+# python real_world/DCE-DR.py --dataset kuai

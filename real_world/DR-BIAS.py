@@ -167,13 +167,13 @@ def para(args):
         }
     elif args.dataset=="kuai":
         args.train_args = {
-            "batch_size": 2048, 
-            "batch_size_prop": 32764,
+            "batch_size": 4096, 
+            "batch_size_prop": 4096,
             "gamma": 0.05,                 # Standard gamma for kuai
             "G": 1                         # Standard G for kuai
         }
         args.model_args = {
-            "embedding_k": 32,             # Embedding dimension for kuai
+            "embedding_k": 64,             # Embedding dimension for kuai
             "lr": 0.05, 
             "lamb": 1e-4
         }

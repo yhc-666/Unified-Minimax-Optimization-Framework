@@ -206,15 +206,15 @@ def para(args, use_imputation=True):
             "batch_size_prop": 4096,        
             "alpha": 1,                     # Weight for ctcvr_loss
             "beta": 5,                      # Weight for cvr_loss_mnar
-            "gamma": 0.027273584201690376,                  # Weight for bmse_loss (5e-2 from original)
+            "gamma": 0.030075259407262876,                  # Weight for bmse_loss (5e-2 from original)
             "imputation": 5,                # Imputation weight from original
             "num_epoch": 500                # Number of training epochs
         }
         args.model_args = {
             "embedding_k": 128,             # Embedding dimension for propensity model
             "embedding_k1": 128,            # Embedding dimension for prediction/imputation models
-            "embedding_k_prop": 32,        # Propensity model embedding (same as others)
-            "pred_lr": 0.001,                # Learning rate from original repo
+            "embedding_k_prop": 64,        # Propensity model embedding (same as others)
+            "pred_lr": 0.005,                # Learning rate from original repo
             "impu_lr": 1e-3,                # Learning rate from original repo
             "prop_lr": 0.005,                # Learning rate from original repo
             "lamb_pred": 1e-06,              # Weight decay for prediction model

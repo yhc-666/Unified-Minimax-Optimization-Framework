@@ -242,8 +242,8 @@ def para(args):
             "num_bins": 10                  # Standard binning
         }
         args.model_args = {
-            "embedding_k": 16,              # Larger embeddings for complex interactions
-            "embedding_k1": 16,             # Same for all embedding models
+            "embedding_k": 32,              # Larger embeddings for complex interactions
+            "embedding_k1": 64,             # Same for all embedding models
             "pred_lr": 0.01,                # Learning rate for prediction model
             "impu_lr": 0.01,                # Learning rate for imputation model
             "prop_lr": 0.01,                # Learning rate for propensity model
@@ -266,4 +266,4 @@ if __name__ == "__main__":
     train_and_eval(args.dataset, args.train_args, args.model_args)
 
 
-# python real_world/Minimax.py --dataset yahoo
+# python real_world/Minimax.py --dataset kuai
