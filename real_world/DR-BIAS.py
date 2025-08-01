@@ -170,11 +170,11 @@ def para(args):
             "batch_size": 4096, 
             "batch_size_prop": 4096,
             "gamma": 0.05,                 # Standard gamma for kuai
-            "G": 1                         # Standard G for kuai
+            "G": 12                        # Standard G for kuai
         }
         args.model_args = {
             "embedding_k": 64,             # Embedding dimension for kuai
-            "lr": 0.05, 
+            "lr": 0.005, 
             "lamb": 1e-4
         }
     return args
@@ -185,4 +185,4 @@ if __name__ == "__main__":
 
     train_and_eval(args.dataset, args.train_args, args.model_args)
 
-# python real_world/DR-BIAS.py --dataset yahoo
+# python real_world/DR-BIAS.py --dataset kuai

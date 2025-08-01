@@ -282,11 +282,11 @@ def para(args):
         args.model_args = {
             "embedding_k": 64,              # Larger embeddings for complex interactions
             "num_experts": 10,              # More experts for complex data
-            "lr_pred": 0.02,                # Higher learning rate
-            "lr_imp": 0.02,                 # Higher learning rate
-            "lr_prop": 0.04,                # Standard learning rate for propensity
+            "lr_pred": 0.005,                # Higher learning rate
+            "lr_imp": 0.005,                 # Higher learning rate
+            "lr_prop": 0.005,                # Standard learning rate for propensity
             "lr_cal": 0.01,                 # Learning rate for calibration
-            "lr_impcal": 0.05,              # Learning rate for imputation calibration
+            "lr_impcal": 0.01,              # Learning rate for imputation calibration
             "lamb_prop": 1e-4,              # Weight decay for propensity
             "lamb_pred": 1e-3,              # Weight decay for prediction
             "lamb_imp": 1e-3,               # Weight decay for imputation

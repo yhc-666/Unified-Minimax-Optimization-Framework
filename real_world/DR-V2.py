@@ -235,9 +235,9 @@ def para(args, use_imputation=True):
             "embedding_k": 256,             # Embedding dimension for propensity model from original
             "embedding_k1": 256,            # Embedding dimension for prediction/imputation models
             "embedding_k_prop": 256,        # Propensity model embedding
-            "pred_lr": 5e-4,                # Learning rate from original repo
-            "impu_lr": 5e-4,                # Learning rate from original repo
-            "prop_lr": 1e-3,                # Propensity learning rate from original repo
+            "pred_lr": 0.001,                # Learning rate from original repo
+            "impu_lr": 0.005,                # Learning rate from original repo
+            "prop_lr": 0.005,                # Propensity learning rate from original repo
             "lamb_pred": 0,                 # Weight decay for prediction model (0 in original)
             "lamb_imp": 0,                  # Weight decay for imputation model (0 in original)
             "lamb_prop": 5                  # Weight decay for propensity model from original

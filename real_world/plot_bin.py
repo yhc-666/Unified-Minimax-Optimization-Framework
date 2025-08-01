@@ -20,9 +20,9 @@ if x_min is not None or x_max is not None:
     if x_max is not None:
         df = df[df['num_bins'] <= x_max]
 
-# Create figure with 5 subplots (3x2 grid, with last subplot empty)
-fig, axes = plt.subplots(3, 2, figsize=(12, 15))
-fig.suptitle('Evaluation Metrics vs Number of Bins', fontsize=16)
+# Create figure with 5 subplots in a single row
+fig, axes = plt.subplots(1, 5, figsize=(25, 5))
+fig.suptitle('Evaluation Metrics vs Number of Bins', fontsize=18, fontweight='bold')
 
 # Flatten axes for easier iteration
 axes = axes.flatten()
@@ -61,12 +61,12 @@ for i, metric in enumerate(metrics):
     
     # Plot the line
     ax.plot(df['num_bins'], df[metric['column']], 
-            marker='o', linewidth=2, markersize=8, color='blue')
+            marker='o', linewidth=3, markersize=10, color='darkblue')
     
     # Set labels and title
-    ax.set_xlabel('Number of Bins', fontsize=12)
-    ax.set_ylabel(metric['ylabel'], fontsize=12)
-    ax.set_title(f'{metric["name"]} vs Number of Bins', fontsize=14)
+    ax.set_xlabel('Number of Bins', fontsize=14, fontweight='bold')
+    ax.set_ylabel(metric['ylabel'], fontsize=14, fontweight='bold')
+    ax.set_title(f'{metric["name"]} vs Number of Bins', fontsize=16, fontweight='bold')
     
     # Set y-axis limits for better visibility of changes
     ax.set_ylim(metric['ylim'])
@@ -74,16 +74,20 @@ for i, metric in enumerate(metrics):
     # Add grid for better readability
     ax.grid(True, alpha=0.3, linestyle='--')
     
+    # Make tick labels bold and larger
+    ax.tick_params(axis='both', which='major', labelsize=12, width=2)
+    for label in ax.get_xticklabels() + ax.get_yticklabels():
+        label.set_fontweight('bold')
+    
     # Format y-axis for scientific notation if needed
     if metric['name'] == 'DR_Variance':
         ax.ticklabel_format(style='scientific', axis='y', scilimits=(0,0))
     
-    # Rotate x-axis labels if needed
+    # Set x-axis labels without rotation, with smaller font
     ax.set_xticks(df['num_bins'])
-    ax.set_xticklabels(df['num_bins'].astype(int))
+    ax.set_xticklabels(df['num_bins'].astype(int), fontsize=9, fontweight='bold')
 
-# Hide the empty subplot (6th subplot)
-axes[-1].set_visible(False)
+# No need to hide any subplot since we have exactly 5
 
 # Adjust layout to prevent overlapping
 plt.tight_layout()

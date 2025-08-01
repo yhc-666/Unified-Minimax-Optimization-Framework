@@ -151,7 +151,7 @@ def para(args):
         args.model_args = {"embedding_k":16, "lr_prop":0.005, "lr_pred":0.005, "lamb_prop": 1e-4,"lamb_pred": 1e-3}  # Unified lr with Minimax
     elif args.dataset=="kuai":
         args.train_args = {"batch_size":4096, "batch_size_prop":32764, "gamma": 0.05}
-        args.model_args = {"embedding_k":32, "lr_prop":0.01, "lr_pred":0.05, "lamb_prop": 1e-5,"lamb_pred": 1e-3}
+        args.model_args = {"embedding_k":32, "lr_prop":0.001, "lr_pred":0.005, "lamb_prop": 1e-5,"lamb_pred": 1e-3}
     return args
 
 if __name__ == "__main__":
@@ -161,4 +161,4 @@ if __name__ == "__main__":
     train_and_eval(args.dataset, args.train_args, args.model_args)
 
 
-# python real_world/MRDR-JL.py --dataset yahoo
+# python real_world/MRDR-JL.py --dataset kuai

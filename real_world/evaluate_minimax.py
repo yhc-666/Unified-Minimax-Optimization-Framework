@@ -588,4 +588,10 @@ def main():
 if __name__ == "__main__":
     main()
 
-# python real_world/evaluate_minimax.py --dataset yahoo --hyperparam num_bins --values 1 3 5 8 10 12 15 18 20 25 30 35 40 45
+# python real_world/evaluate_minimax.py --dataset yahoo --hyperparam beta --values 0.01 0.1 1 10 100 --output yahoo_beta_evaluation_results.csv
+# python real_world/evaluate_minimax.py --dataset kuai --hyperparam beta --values 0.01 0.1 1 10 100 --output kuai_beta_evaluation_results.csv
+# python real_world/evaluate_minimax.py --dataset coat --hyperparam beta --values 0.01 0.1 1 10 100 --output coat_beta_evaluation_results.csv
+
+# python real_world/evaluate_minimax.py --dataset yahoo --hyperparam num_bins --values 1 3 5 8 10 12 15 18 20 25 30 35 40 45 --output yahoo_num_bins_evaluation_results.csv
+# python real_world/evaluate_minimax.py --dataset kuai --hyperparam num_bins --values 1 3 5 8 10 12 15 18 20 25 30 35 40 45 --output kuai_num_bins_evaluation_results.csv
+# python real_world/evaluate_minimax.py --dataset coat --hyperparam num_bins --values 1 3 5 8 10 12 15 18 20 25 30 35 40 45 --output coat_num_bins_evaluation_results.csv

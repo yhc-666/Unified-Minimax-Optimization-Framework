@@ -185,7 +185,7 @@ def para(args):
             "gamma": 0.0174859545582588,                  # Propensity score clipping threshold (clips to [gamma, 1.0] to avoid extreme weights)
             "G": 1,                         # Ratio of unobserved to observed samples (controls exploration in DR estimator)
             "alpha": 0.5,                   # Unused in current implementation (kept for compatibility)
-            "beta": 0.1,                    # Weight for adversarial loss in propensity model training
+            "beta": 0.5,                    # Weight for adversarial loss in propensity model training
             "theta": 1,                     # Unused in current implementation (kept for compatibility)
             "num_bins": 20                 # Number of bins for propensity score stratification
         }
@@ -213,7 +213,7 @@ def para(args):
             "alpha": 0.5,                   # Unused parameter
             "beta": 1,                   # Much smaller adversarial weight (yahoo needs less regularization)
             "theta": 1,                     # Unused parameter
-            "num_bins": 3                  # Same binning strategy
+            "num_bins": 20                  # Same binning strategy
         }
         args.model_args = {
             "embedding_k": 32,              # Larger embeddings for larger dataset
@@ -227,33 +227,33 @@ def para(args):
             "lamb_pred": 0.00011624950138819,              # Weight decay for prediction model
             "lamb_imp": 0.039023385901065,               # Weight decay for imputation model (prevents overfitting)
             "dis_lamb": 0.0437005524910195,                # Weight decay for discriminator model
-            "abc_model_name": "logistic_regression",  # Same discriminator architecture
+            "abc_model_name": "mlp",  # Same discriminator architecture
             "copy_model_pred": 1            # Initialize imputation from prediction
         }
     elif args.dataset=="kuai":
         args.train_args = {
             "batch_size": 4096,             # Large batch for efficient training
             "batch_size_prop": 32764,        # Same as main batch size
-            "gamma": 0.05,                  # Standard propensity clipping
-            "G": 4,                         # Standard exploration ratio
+            "gamma": 0.0349895704059796,                  # Standard propensity clipping
+            "G": 1,                         # Standard exploration ratio
             "alpha": 0.5,                   # Unused parameter
-            "beta": 1e-5,                   # Small adversarial weight like yahoo
+            "beta": 100,                   # Small adversarial weight like yahoo
             "theta": 1,                     # Unused parameter
-            "num_bins": 10                  # Standard binning
+            "num_bins": 20                  # Standard binning
         }
         args.model_args = {
             "embedding_k": 32,              # Larger embeddings for complex interactions
-            "embedding_k1": 64,             # Same for all embedding models
+            "embedding_k1": 16,             # Same for all embedding models
             "pred_lr": 0.01,                # Learning rate for prediction model
-            "impu_lr": 0.01,                # Learning rate for imputation model
-            "prop_lr": 0.01,                # Learning rate for propensity model
+            "impu_lr": 0.005,                # Learning rate for imputation model
+            "prop_lr": 0.005,                # Learning rate for propensity model
             "dis_lr": 0.01,                 # Learning rate for discriminator model
-            "lamb_prop": 1e-2,              # Weight decay for propensity model (kuai needs more)
+            "lamb_prop": 0.0491711260687503,              # Weight decay for propensity model (kuai needs more)
             "prop_lamb": 1e-2,              # Weight decay for pre-training
-            "lamb_pred": 1e-5,              # Weight decay for prediction model
-            "lamb_imp": 1e-2,               # Weight decay for imputation model
-            "dis_lamb": 0.0,                # Weight decay for discriminator model
-            "abc_model_name": "logistic_regression",  # Standard discriminator
+            "lamb_pred": 0.000448765459074699,              # Weight decay for prediction model
+            "lamb_imp": 0.00492644172204401,               # Weight decay for imputation model
+            "dis_lamb": 0.0555228804065638,                # Weight decay for discriminator model
+            "abc_model_name": "mlp",  # Standard discriminator
             "copy_model_pred": 1            # Initialize imputation from prediction
         }
     return args
@@ -266,4 +266,4 @@ if __name__ == "__main__":
     train_and_eval(args.dataset, args.train_args, args.model_args)
 
 
-# python real_world/Minimax.py --dataset kuai
+# python real_world/Minimax.py --dataset yahoo

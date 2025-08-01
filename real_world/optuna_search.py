@@ -64,8 +64,8 @@ HYPERPARAM_RANGES = {
         'abc_model_name': ['logistic_regression', 'mlp']
     },
     'kuai': {
-        'embedding_k': [16, 32, 64],
-        'embedding_k1': [16, 32, 64],
+        'embedding_k': [16, 32, 64, 128, 256, 512],
+        'embedding_k1': [16, 32, 64, 128, 256, 512],
         'pred_lr': [0.005, 0.01],
         'impu_lr': [0.005, 0.01],
         'prop_lr': [0.005, 0.01],
@@ -76,8 +76,8 @@ HYPERPARAM_RANGES = {
         'dis_lamb': [1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3],
         'gamma': (0.01, 0.05),
         'beta': [0.01, 0.05, 0.1, 0.5, 1, 5, 10, 50, 100],
-        'G': [1, 2, 4, 6, 8, 10, 12],
-        'num_bins': [5, 10, 15, 20],
+        'G': [1, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20],
+        'num_bins': [5, 10, 15, 20, 25, 30, 35, 40, 45, 50],
         'batch_size': [4096],
         'abc_model_name': ['logistic_regression', 'mlp']
     }
@@ -571,7 +571,7 @@ def main():
     print("\n" + "="*50)
     print(f"Found {len(pareto_trials)} Pareto optimal solutions")
     
-    pareto_params_path = os.path.join(dataset_output_dir, f'{args.dataset}_{args.model_type}_pareto_optimal_params.csv')
+    pareto_params_path = os.path.join(dataset_output_dir, f'{args.dataset}_{args.model_type}_version2_pareto_optimal_params.csv')
     with open(pareto_params_path, 'w', newline='') as f:
         if pareto_trials:
             fieldnames = ['trial_number', 'pareto_rank']

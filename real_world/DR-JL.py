@@ -185,9 +185,9 @@ def para(args):
         }
         args.model_args = {
             "embedding_k": 64,                    # Larger embedding for kuai
-            "lr": 0.05,                           # Higher learning rate for prediction/imputation
-            "lr_prop": 0.01,                      # Learning rate for propensity
-            "lr_imp": 0.01,                       # Learning rate for imputation (if needed)
+            "lr": 0.005,                           # Higher learning rate for prediction/imputation
+            "lr_prop": 0.001,                      # Learning rate for propensity
+            "lr_imp": 0.001,                       # Learning rate for imputation (if needed)
             "lamb_prop": 1e-4,                    # Weight decay for propensity
             "lamb_pred": 1e-3,                    # Weight decay for prediction
             "lamb_imp": 1e-4                      # Weight decay for imputation
@@ -200,4 +200,4 @@ if __name__ == "__main__":
 
     train_and_eval(args.dataset, args.train_args, args.model_args)
 
-# python real_world/DR-JL.py --dataset yahoo
+# python real_world/DR-JL.py --dataset kuai
