@@ -22,4 +22,5 @@ python real_world/optuna_search.py \
     --metrics auc ndcg_20 f1_20 \
     --directions maximize maximize maximize \
     --n_trials 200 \
+    --output_dir optuna_results/CaliMR_kuai \
     --save_all_trials

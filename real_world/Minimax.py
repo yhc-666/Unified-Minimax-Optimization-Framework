@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import numpy as np
+import pandas as pd
 import torch
 import scipy.sparse as sps
 from sklearn.metrics import roc_auc_score
@@ -64,10 +65,47 @@ def train_and_eval(dataset_name, train_args, model_args):
         num_user = x_train[:,0].max() + 1
         num_item = x_train[:,1].max() + 1
 
-    elif dataset_name == "kuai":
-        x_train, y_train, x_test, y_test = load_data("kuai")
-        num_user = x_train[:,0].max() + 1
-        num_item = x_train[:,1].max() + 1
+    elif dataset_name == "kuai": # 原script可能不align，采用CaliMR
+        # x_train, y_train, x_test, y_test = load_data("kuai")
+        rdf_train = np.array(pd.read_table("real_world/data/kuai/user.txt", header = None, sep = ','))
+        rdf_test = np.array(pd.read_table("real_world/data/kuai/random.txt", header = None, sep = ','))
+        rdf_train_new = np.c_[rdf_train, np.ones(rdf_train.shape[0])]
+        rdf_test_new = np.c_[rdf_test, np.zeros(rdf_test.shape[0])]
+        rdf = np.r_[rdf_train_new, rdf_test_new]
+
+        rdf = rdf[np.argsort(rdf[:, 0])]
+        c = rdf.copy()
+        for i in range(rdf.shape[0]):
+            if i == 0:
+                c[:, 0][i] = i
+                temp = rdf[:, 0][0]
+            else:
+                if c[:, 0][i] == temp:
+                    c[:, 0][i] = c[:, 0][i-1]
+                else:
+                    c[:, 0][i] = c[:, 0][i-1] + 1
+                temp = rdf[:, 0][i]
+
+        c = c[np.argsort(c[:, 1])]
+        d = c.copy()
+        for i in range(rdf.shape[0]):
+            if i == 0:
+                d[:, 1][i] = i
+                temp = c[:, 1][0]
+            else:
+                if d[:, 1][i] == temp:
+                    d[:, 1][i] = d[:, 1][i-1]
+                else:
+                    d[:, 1][i] = d[:, 1][i-1] + 1
+                temp = c[:, 1][i]
+
+        y_train = d[:, 2][d[:, 3] == 1].astype(int)
+        y_test = d[:, 2][d[:, 3] == 0].astype(int)
+        x_train = d[:, :2][d[:, 3] == 1].astype(int)
+        x_test = d[:, :2][d[:, 3] == 0].astype(int)
+
+        num_user = int(x_train[:,0].max()) + 1
+        num_item = int(x_train[:,1].max()) + 1
         top_k_list = [20]
         top_k_names = ("precision_20", "recall_20", "ndcg_20", "f1_20")
 
@@ -122,7 +160,8 @@ def train_and_eval(dataset_name, train_args, model_args):
            dis_lamb=model_args['dis_lamb'],
            G=train_args["G"],
            gamma=train_args['gamma'],
-           num_bins=train_args.get('num_bins', 10))
+           num_bins=train_args.get('num_bins', 10),
+           verbose=True)
     train_time = time.time() - train_start_time
     
     total_time = init_time + prop_time + train_time
@@ -187,7 +226,7 @@ def para(args):
             "alpha": 0.5,                   # Unused in current implementation (kept for compatibility)
             "beta": 0.5,                    # Weight for adversarial loss in propensity model training
             "theta": 1,                     # Unused in current implementation (kept for compatibility)
-            "num_bins": 20                 # Number of bins for propensity score stratification
+            "num_bins": 30                 # Number of bins for propensity score stratification
         }
         args.model_args = {
             "embedding_k": 32,               # Embedding dimension for propensity and discriminator models
@@ -233,26 +272,26 @@ def para(args):
     elif args.dataset=="kuai":
         args.train_args = {
             "batch_size": 4096,             # Large batch for efficient training
-            "batch_size_prop": 32764,        # Same as main batch size
-            "gamma": 0.0349895704059796,                  # Standard propensity clipping
-            "G": 1,                         # Standard exploration ratio
+            "batch_size_prop": 4096,        # Same as main batch size
+            "gamma": 1,                  # Standard propensity clipping
+            "G": 4,                         # Standard exploration ratio
             "alpha": 0.5,                   # Unused parameter
-            "beta": 100,                   # Small adversarial weight like yahoo
+            "beta": 10,                   # Small adversarial weight like yahoo
             "theta": 1,                     # Unused parameter
             "num_bins": 20                  # Standard binning
         }
         args.model_args = {
-            "embedding_k": 32,              # Larger embeddings for complex interactions
-            "embedding_k1": 16,             # Same for all embedding models
-            "pred_lr": 0.01,                # Learning rate for prediction model
+            "embedding_k": 128,              # Larger embeddings for complex interactions
+            "embedding_k1":128,             # Same for all embedding models
+            "pred_lr": 0.005,                # Learning rate for prediction model
             "impu_lr": 0.005,                # Learning rate for imputation model
             "prop_lr": 0.005,                # Learning rate for propensity model
-            "dis_lr": 0.01,                 # Learning rate for discriminator model
-            "lamb_prop": 0.0491711260687503,              # Weight decay for propensity model (kuai needs more)
-            "prop_lamb": 1e-2,              # Weight decay for pre-training
-            "lamb_pred": 0.000448765459074699,              # Weight decay for prediction model
-            "lamb_imp": 0.00492644172204401,               # Weight decay for imputation model
-            "dis_lamb": 0.0555228804065638,                # Weight decay for discriminator model
+            "dis_lr": 0.005,                 # Learning rate for discriminator model
+            "lamb_prop": 1e-5,              # Weight decay for propensity model (kuai needs more)
+            "prop_lamb": 1e-5,              # Weight decay for pre-training
+            "lamb_pred": 1e-5,              # Weight decay for prediction model
+            "lamb_imp": 1e-5,               # Weight decay for imputation model
+            "dis_lamb": 1e-5,                # Weight decay for discriminator model
             "abc_model_name": "mlp",  # Standard discriminator
             "copy_model_pred": 1            # Initialize imputation from prediction
         }
@@ -266,4 +305,4 @@ if __name__ == "__main__":
     train_and_eval(args.dataset, args.train_args, args.model_args)
 
 
-# python real_world/Minimax.py --dataset yahoo
+# python real_world/Minimax.py --dataset kuai

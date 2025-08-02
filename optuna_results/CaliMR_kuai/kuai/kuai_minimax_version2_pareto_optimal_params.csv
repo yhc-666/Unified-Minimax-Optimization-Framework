@@ -1,0 +1,2 @@
+trial_number,pareto_rank,auc,ndcg_20,f1_20,G,abc_model_name,batch_size,beta,dis_lamb,dis_lr,embedding_k,embedding_k1,gamma,impu_lr,lamb_imp,lamb_pred,lamb_prop,num_bins,pred_lr,prop_lr
+134,1,0.7813864103258281,0.5004086946243662,0.14518865671886882,4,mlp,4096,0.01,1e-06,0.005,16,16,0.013373206132975792,0.01,5e-06,0.0001,5e-05,50,0.01,0.005

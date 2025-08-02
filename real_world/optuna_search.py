@@ -20,6 +20,7 @@ import csv
 import os
 import time
 import scipy.sparse as sps
+import pandas as pd
 
 # Metric functions
 mse_func = lambda x,y: np.mean((x-y)**2)
@@ -66,15 +67,15 @@ HYPERPARAM_RANGES = {
     'kuai': {
         'embedding_k': [16, 32, 64, 128, 256, 512],
         'embedding_k1': [16, 32, 64, 128, 256, 512],
-        'pred_lr': [0.005, 0.01],
-        'impu_lr': [0.005, 0.01],
-        'prop_lr': [0.005, 0.01],
-        'dis_lr': [0.005, 0.01],
+        'pred_lr': [0.005, 0.01, 0.05],
+        'impu_lr': [0.005, 0.01, 0.05],
+        'prop_lr': [0.005, 0.01, 0.05],
+        'dis_lr': [0.005, 0.01, 0.05],
         'lamb_pred': [1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3],
         'lamb_imp': [1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3],
         'lamb_prop': [1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3],
         'dis_lamb': [1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3],
-        'gamma': (0.01, 0.05),
+        'gamma': (0.01, 10),
         'beta': [0.01, 0.05, 0.1, 0.5, 1, 5, 10, 50, 100],
         'G': [1, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20],
         'num_bins': [5, 10, 15, 20, 25, 30, 35, 40, 45, 50],
@@ -131,7 +132,7 @@ DRV2_HYPERPARAM_RANGES = {
         'lamb_prop': [1e-4, 5e-4, 1e-3],
         'alpha': [1],  # Fixed as it's unused
         'beta': [1, 3, 5, 10],
-        'gamma': (0.01, 0.1),
+        'gamma': (0.01, 0.1, 1, 5, 10),
         'imputation': [1e-4, 1e-3, 1e-2],  # Only for DRv2_Imp
         'batch_size': [4096],
         'num_epoch': [500]
@@ -157,10 +158,46 @@ def train_and_eval_with_params(dataset_name, train_args, model_args):
         num_user = x_train[:,0].max() + 1
         num_item = x_train[:,1].max() + 1
 
-    elif dataset_name == "kuai":
-        x_train, y_train, x_test, y_test = load_data("kuai")
-        num_user = x_train[:,0].max() + 1
-        num_item = x_train[:,1].max() + 1
+    elif dataset_name == "kuai": # 改为使用CaliMR处理对齐
+        # x_train, y_train, x_test, y_test = load_data("kuai")
+        rdf_train = np.array(pd.read_table("real_world/data/CaliMR_kuai/user.txt", header = None, sep = ',')).astype(float)
+        rdf_test = np.array(pd.read_table("real_world/data/CaliMR_kuai/random.txt", header = None, sep = ',')).astype(float)
+        rdf_train_new = np.c_[rdf_train, np.ones(rdf_train.shape[0])]
+        rdf_test_new = np.c_[rdf_test, np.zeros(rdf_test.shape[0])]
+        rdf = np.r_[rdf_train_new, rdf_test_new]
+
+        rdf = rdf[np.argsort(rdf[:, 0])]
+        c = rdf.copy()
+        for i in range(rdf.shape[0]):
+            if i == 0:
+                c[:, 0][i] = i
+                temp = rdf[:, 0][0]
+            else:
+                if c[:, 0][i] == temp:
+                    c[:, 0][i] = c[:, 0][i-1]
+                else:
+                    c[:, 0][i] = c[:, 0][i-1] + 1
+                temp = rdf[:, 0][i]
+
+        c = c[np.argsort(c[:, 1])]
+        d = c.copy()
+        for i in range(rdf.shape[0]):
+            if i == 0:
+                d[:, 1][i] = i
+                temp = c[:, 1][0]
+            else:
+                if d[:, 1][i] == temp:
+                    d[:, 1][i] = d[:, 1][i-1]
+                else:
+                    d[:, 1][i] = d[:, 1][i-1] + 1
+                temp = c[:, 1][i]
+
+        y_train = d[:, 2][d[:, 3] == 1].astype(int)
+        y_test = d[:, 2][d[:, 3] == 0].astype(int)
+        x_train = d[:, :2][d[:, 3] == 1].astype(int)
+        x_test = d[:, :2][d[:, 3] == 0].astype(int)
+        num_user = int(x_train[:,0].max()) + 1
+        num_item = int(x_train[:,1].max()) + 1
         top_k_list = [20]
 
     # Binarize ratings

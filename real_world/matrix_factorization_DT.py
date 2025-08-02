@@ -1537,7 +1537,8 @@ class MF_Minimax(nn.Module):
         self.sigmoid = torch.nn.Sigmoid()
         self.xent_func = torch.nn.BCELoss()
 
-    def _compute_IPS(self, x, num_epoch=1000, lr=0.05, lamb=0, tol=1e-4, verbose=False):
+    # 原来lamb=0
+    def _compute_IPS(self, x, num_epoch=1000, lr=0.05, lamb=1e-5, tol=1e-4, verbose=False):
         print('Stage1: computing_IPS', lr, lamb)
         
         # Generate obs from x
