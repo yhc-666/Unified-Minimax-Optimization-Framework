@@ -9,9 +9,10 @@ import torch.nn.functional as F
 import arguments
 from tqdm import tqdm
 import time
+import copy
 
 from dataset import load_data
-from matrix_factorization_DT import generate_total_sample, MF_Minimax
+from matrix_factorization_DT import generate_total_sample, MF_MinimaxV4
 from utils import gini_index, ndcg_func, get_user_wise_ctr, rating_mat_to_sample, binarize, shuffle, minU, precision_func, recall_func, set_all_seeds, set_deterministic
 
 mse_func = lambda x,y: np.mean((x-y)**2)
@@ -122,14 +123,14 @@ def train_and_eval(dataset_name, train_args, model_args, seed=2020):
         y_train = binarize(y_train, 3)
         y_test = binarize(y_test, 3)
 
-    "Minimax"
+    "MinimaxV4"
     # Start timing for model initialization
     init_start_time = time.time()
     
-    mf = MF_Minimax(num_user, num_item, batch_size=train_args['batch_size'], batch_size_prop=train_args['batch_size_prop'],
-                    embedding_k=model_args['embedding_k'], embedding_k1=model_args['embedding_k1'],
-                    abc_model_name=model_args.get('abc_model_name', 'logistic_regression'),
-                    copy_model_pred=model_args.get('copy_model_pred', 1))
+    mf = MF_MinimaxV4(num_user, num_item, batch_size=train_args['batch_size'], batch_size_prop=train_args['batch_size_prop'],
+                      embedding_k=model_args['embedding_k'], embedding_k1=model_args['embedding_k1'],
+                      abc_model_name=model_args.get('abc_model_name', 'logistic_regression'),
+                      copy_model_pred=model_args.get('copy_model_pred', 1))
     
     init_time = time.time() - init_start_time
     
@@ -147,26 +148,27 @@ def train_and_eval(dataset_name, train_args, model_args, seed=2020):
     
     # Then train the full model with early stopping
     train_start_time = time.time()
-    mf.fit(x_train, y_train, 
-           x_test=x_test, y_test=y_test,  # Pass test data for early stopping
-           pred_lr=model_args['pred_lr'], 
-           impu_lr=model_args['impu_lr'],
-           prop_lr=model_args['prop_lr'],
-           dis_lr=model_args['dis_lr'],
-           alpha=train_args.get('alpha', 0.5), 
-           beta=train_args['beta'], 
-           theta=train_args.get('theta', 1),
-           lamb_prop=model_args['lamb_prop'],
-           lamb_pred=model_args['lamb_pred'],
-           lamb_imp=model_args['lamb_imp'],
-           dis_lamb=model_args['dis_lamb'],
-           G=train_args["G"],
-           gamma=train_args['gamma'],
-           num_bins=train_args.get('num_bins', 10),
-           verbose=True,
-           early_stop_patience=20,
-           early_stop_min_delta=1e-3,
-           eval_freq=10)
+    best_epoch = mf.fit(x_train, y_train, 
+                        x_test=x_test, y_test=y_test,  # Pass test data for early stopping
+                        pred_lr=model_args['pred_lr'], 
+                        impu_lr=model_args['impu_lr'],
+                        prop_lr=model_args['prop_lr'],
+                        dis_lr=model_args['dis_lr'],
+                        alpha=train_args.get('alpha', 0.5), 
+                        beta=train_args['beta'], 
+                        theta=train_args.get('theta', 1),
+                        lamb_prop=model_args['lamb_prop'],
+                        lamb_pred=model_args['lamb_pred'],
+                        lamb_imp=model_args['lamb_imp'],
+                        dis_lamb=model_args['dis_lamb'],
+                        G=train_args["G"],
+                        gamma=train_args['gamma'],
+                        num_bins=train_args.get('num_bins', 10),
+                        verbose=True,
+                        early_stop_patience=30,
+                        early_stop_min_delta=1e-4,
+                        eval_freq=5,
+                        grad_clip_norm=1.0)
     train_time = time.time() - train_start_time
     
     total_time = init_time + prop_time + train_time
@@ -186,18 +188,18 @@ def train_and_eval(dataset_name, train_args, model_args, seed=2020):
     precisions = precision_func(mf, x_test, y_test, top_k_list)
     recalls = recall_func(mf, x_test, y_test, top_k_list)
 
-    print("***"*5 + "[Minimax]" + "***"*5)
-    print("[Minimax] TRAINING METRICS:")
-    print("[Minimax] train mse:", train_mse)
-    print("[Minimax] train mae:", train_mae)
-    print("[Minimax] train auc:", train_auc)
-    print("\n[Minimax] TEST METRICS:")
-    print("[Minimax] test mse:", mse_mf)
-    print("[Minimax] test mae:", mae_mf)
-    print("[Minimax] test auc:", auc)
-    print("\n[Minimax] OVERFITTING CHECK:")
-    print("[Minimax] AUC gap (train-test):", train_auc - auc)
-    print("[Minimax] Relative AUC gap:", (train_auc - auc) / train_auc * 100, "%")
+    print("***"*5 + "[MinimaxV4]" + "***"*5)
+    print("[MinimaxV4] TRAINING METRICS:")
+    print("[MinimaxV4] train mse:", train_mse)
+    print("[MinimaxV4] train mae:", train_mae)
+    print("[MinimaxV4] train auc:", train_auc)
+    print("\n[MinimaxV4] TEST METRICS:")
+    print("[MinimaxV4] test mse:", mse_mf)
+    print("[MinimaxV4] test mae:", mae_mf)
+    print("[MinimaxV4] test auc:", auc)
+    print("\n[MinimaxV4] OVERFITTING CHECK:")
+    print("[MinimaxV4] AUC gap (train-test):", train_auc - auc)
+    print("[MinimaxV4] Relative AUC gap:", (train_auc - auc) / train_auc * 100, "%")
     
     # Print results for each k value
     for k in top_k_list:
@@ -207,21 +209,21 @@ def train_and_eval(dataset_name, train_args, model_args, seed=2020):
         
         f1_k = 2 / (1 / np.mean(precisions[precision_key]) + 1 / np.mean(recalls[recall_key]))
         
-        print("[Minimax] {}:{:.6f}".format(
+        print("[MinimaxV4] {}:{:.6f}".format(
                 ndcg_key.replace("_", "@"), np.mean(ndcgs[ndcg_key])))
-        print("[Minimax] {}:{:.6f}".format(f"f1@{k}", f1_k))
-        print("[Minimax] {}:{:.6f}".format(
+        print("[MinimaxV4] {}:{:.6f}".format(f"f1@{k}", f1_k))
+        print("[MinimaxV4] {}:{:.6f}".format(
                 precision_key.replace("_", "@"), np.mean(precisions[precision_key])))
-        print("[Minimax] {}:{:.6f}".format(
+        print("[MinimaxV4] {}:{:.6f}".format(
                 recall_key.replace("_", "@"), np.mean(recalls[recall_key])))
     
     user_wise_ctr = get_user_wise_ctr(x_test,y_test,test_pred)
     gi,gu = gini_index(user_wise_ctr)
-    print("***"*5 + "[Minimax]" + "***"*5)
+    print("***"*5 + "[MinimaxV4]" + "***"*5)
     
     # Print complexity analysis
     print("\n" + "="*50)
-    print("[Minimax] Complexity Analysis:")
+    print("[MinimaxV4] Complexity Analysis:")
     print("="*50)
     print(f"Total Parameters: {total_params:,}")
     for component, params in param_details.items():
@@ -232,6 +234,7 @@ def train_and_eval(dataset_name, train_args, model_args, seed=2020):
     print(f"  - Propensity Pre-training: {prop_time:.2f} seconds")
     print(f"  - Main Training: {train_time:.2f} seconds")
     print(f"  - Total Time: {total_time:.2f} seconds")
+    print(f"  - Best Epoch: {best_epoch}")
     print("="*50 + "\n")
 
 
@@ -293,26 +296,26 @@ def para(args):
         args.train_args = {
             "batch_size": 4096,             # Large batch for efficient training
             "batch_size_prop": 4096,        # Same as main batch size
-            "gamma": 1,                  # Standard propensity clipping
-            "G": 4,                         # Standard exploration ratio
+            "gamma": 0.010290745476856678,                  # Standard propensity clipping
+            "G": 6,                         # Standard exploration ratio
             "alpha": 0.5,                   # Unused parameter
-            "beta": 10,                   # Small adversarial weight like yahoo
+            "beta": 100,                   # Small adversarial weight like yahoo
             "theta": 1,                     # Unused parameter
-            "num_bins": 20                  # Standard binning
+            "num_bins": 50                  # Standard binning
         }
         args.model_args = {
-            "embedding_k": 128,              # Larger embeddings for complex interactions
-            "embedding_k1":128,             # Same for all embedding models
-            "pred_lr": 0.005,                # Learning rate for prediction model
-            "impu_lr": 0.005,                # Learning rate for imputation model
-            "prop_lr": 0.005,                # Learning rate for propensity model
+            "embedding_k": 32,              # Larger embeddings for complex interactions
+            "embedding_k1":32,             # Same for all embedding models
+            "pred_lr": 0.01,                # Learning rate for prediction model
+            "impu_lr": 0.01,                # Learning rate for imputation model
+            "prop_lr": 0.01,                # Learning rate for propensity model
             "dis_lr": 0.005,                 # Learning rate for discriminator model
             "lamb_prop": 1e-5,              # Weight decay for propensity model (kuai needs more)
             "prop_lamb": 1e-5,              # Weight decay for pre-training
-            "lamb_pred": 1e-5,              # Weight decay for prediction model
-            "lamb_imp": 1e-5,               # Weight decay for imputation model
-            "dis_lamb": 1e-5,                # Weight decay for discriminator model
-            "abc_model_name": "mlp",  # Standard discriminator
+            "lamb_pred": 0.0001,              # Weight decay for prediction model
+            "lamb_imp": 5e-05,               # Weight decay for imputation model
+            "dis_lamb": 0.005,                # Weight decay for discriminator model
+            "abc_model_name": "logistic_regression",  # Standard discriminator
             "copy_model_pred": 1            # Initialize imputation from prediction
         }
     return args
@@ -325,4 +328,4 @@ if __name__ == "__main__":
     train_and_eval(args.dataset, args.train_args, args.model_args, seed=args.seed)
 
 
-# python real_world/Minimax.py --dataset kuai
+# python real_world/MinimaxV4.py --dataset kuai

@@ -1,0 +1,50 @@
+Dataset: kuai
+Model Type: minimax
+Metrics: auc (maximize)
+Number of trials: 300
+Number of Pareto optimal solutions: 1
+
+============================================================
+PARETO OPTIMAL SOLUTIONS
+============================================================
+
+Pareto Solution #1 (Trial 281):
+----------------------------------------
+Objective values:
+  auc: 0.791142
+
+All metrics:
+  mse: 0.097854
+  mae: 0.260455
+  auc: 0.791142
+  train_mse: 0.115697
+  train_mae: 0.280983
+  train_auc: 0.910178
+  ndcg_20: 0.501463
+  precision_20: 0.087527
+  recall_20: 0.425241
+  f1_20: 0.145173
+  ndcg: 0.501463
+  precision: 0.087527
+  recall: 0.425241
+  f1: 0.145173
+  training_time: 55.700027
+
+Parameters:
+  batch_size: 4096
+  gamma: 0.015749734408068577
+  G: 1
+  beta: 0.05
+  num_bins: 15
+  embedding_k: 16
+  embedding_k1: 16
+  pred_lr: 0.01
+  impu_lr: 0.005
+  prop_lr: 0.005
+  dis_lr: 0.005
+  lamb_pred: 0.0005
+  lamb_imp: 0.0001
+  lamb_prop: 5e-05
+  dis_lamb: 0.005
+  abc_model_name: mlp
+

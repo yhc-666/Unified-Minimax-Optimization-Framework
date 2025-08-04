@@ -1,0 +1,262 @@
+Dataset: kuai
+Model Type: minimax
+Metrics: auc (maximize), ndcg_20 (maximize), f1_20 (maximize)
+Number of trials: 600
+Number of Pareto optimal solutions: 6
+
+============================================================
+PARETO OPTIMAL SOLUTIONS
+============================================================
+
+Pareto Solution #1 (Trial 136):
+----------------------------------------
+Objective values:
+  auc: 0.769603
+  ndcg_20: 0.503667
+  f1_20: 0.145190
+
+All metrics:
+  mse: 0.109611
+  mae: 0.286036
+  auc: 0.769603
+  train_mse: 0.107458
+  train_mae: 0.273697
+  train_auc: 0.921077
+  ndcg_20: 0.503667
+  precision_20: 0.088483
+  recall_20: 0.404287
+  f1_20: 0.145190
+  ndcg: 0.503667
+  precision: 0.088483
+  recall: 0.404287
+  f1: 0.145190
+  training_time: 50.049895
+
+Parameters:
+  batch_size: 4096
+  gamma: 0.03674360052313263
+  G: 1
+  beta: 0.5
+  num_bins: 50
+  embedding_k: 16
+  embedding_k1: 16
+  pred_lr: 0.01
+  impu_lr: 0.01
+  prop_lr: 0.01
+  dis_lr: 0.005
+  lamb_pred: 0.0005
+  lamb_imp: 0.0001
+  lamb_prop: 0.001
+  dis_lamb: 0.0005
+  abc_model_name: mlp
+
+Pareto Solution #2 (Trial 294):
+----------------------------------------
+Objective values:
+  auc: 0.770800
+  ndcg_20: 0.503978
+  f1_20: 0.145048
+
+All metrics:
+  mse: 0.107568
+  mae: 0.279550
+  auc: 0.770800
+  train_mse: 0.102356
+  train_mae: 0.264449
+  train_auc: 0.929991
+  ndcg_20: 0.503978
+  precision_20: 0.088129
+  recall_20: 0.409577
+  f1_20: 0.145048
+  ndcg: 0.503978
+  precision: 0.088129
+  recall: 0.409577
+  f1: 0.145048
+  training_time: 53.922570
+
+Parameters:
+  batch_size: 4096
+  gamma: 0.038177116802083
+  G: 1
+  beta: 50
+  num_bins: 50
+  embedding_k: 16
+  embedding_k1: 16
+  pred_lr: 0.01
+  impu_lr: 0.01
+  prop_lr: 0.01
+  dis_lr: 0.01
+  lamb_pred: 0.0005
+  lamb_imp: 1e-05
+  lamb_prop: 0.0005
+  dis_lamb: 0.01
+  abc_model_name: logistic_regression
+
+Pareto Solution #3 (Trial 302):
+----------------------------------------
+Objective values:
+  auc: 0.772040
+  ndcg_20: 0.503917
+  f1_20: 0.143838
+
+All metrics:
+  mse: 0.111925
+  mae: 0.294393
+  auc: 0.772040
+  train_mse: 0.113949
+  train_mae: 0.286994
+  train_auc: 0.911532
+  ndcg_20: 0.503917
+  precision_20: 0.087775
+  recall_20: 0.398132
+  f1_20: 0.143838
+  ndcg: 0.503917
+  precision: 0.087775
+  recall: 0.398132
+  f1: 0.143838
+  training_time: 57.163720
+
+Parameters:
+  batch_size: 4096
+  gamma: 0.05003927637317008
+  G: 1
+  beta: 50
+  num_bins: 15
+  embedding_k: 16
+  embedding_k1: 16
+  pred_lr: 0.01
+  impu_lr: 0.005
+  prop_lr: 0.005
+  dis_lr: 0.01
+  lamb_pred: 0.0005
+  lamb_imp: 1e-05
+  lamb_prop: 0.0005
+  dis_lamb: 0.01
+  abc_model_name: logistic_regression
+
+Pareto Solution #4 (Trial 417):
+----------------------------------------
+Objective values:
+  auc: 0.782985
+  ndcg_20: 0.494949
+  f1_20: 0.142394
+
+All metrics:
+  mse: 0.102681
+  mae: 0.276783
+  auc: 0.782985
+  train_mse: 0.122480
+  train_mae: 0.295558
+  train_auc: 0.896188
+  ndcg_20: 0.494949
+  precision_20: 0.086357
+  recall_20: 0.405554
+  f1_20: 0.142394
+  ndcg: 0.494949
+  precision: 0.086357
+  recall: 0.405554
+  f1: 0.142394
+  training_time: 60.203473
+
+Parameters:
+  batch_size: 4096
+  gamma: 0.03666477796659059
+  G: 1
+  beta: 50
+  num_bins: 15
+  embedding_k: 32
+  embedding_k1: 16
+  pred_lr: 0.01
+  impu_lr: 0.005
+  prop_lr: 0.01
+  dis_lr: 0.005
+  lamb_pred: 0.0005
+  lamb_imp: 0.0001
+  lamb_prop: 1e-05
+  dis_lamb: 0.001
+  abc_model_name: mlp
+
+Pareto Solution #5 (Trial 592):
+----------------------------------------
+Objective values:
+  auc: 0.778679
+  ndcg_20: 0.502724
+  f1_20: 0.143115
+
+All metrics:
+  mse: 0.103692
+  mae: 0.275834
+  auc: 0.778679
+  train_mse: 0.102413
+  train_mae: 0.269338
+  train_auc: 0.942703
+  ndcg_20: 0.502724
+  precision_20: 0.086605
+  recall_20: 0.411841
+  f1_20: 0.143115
+  ndcg: 0.502724
+  precision: 0.086605
+  recall: 0.411841
+  f1: 0.143115
+  training_time: 61.270024
+
+Parameters:
+  batch_size: 4096
+  gamma: 0.02828532183977936
+  G: 1
+  beta: 1
+  num_bins: 50
+  embedding_k: 16
+  embedding_k1: 32
+  pred_lr: 0.01
+  impu_lr: 0.005
+  prop_lr: 0.01
+  dis_lr: 0.005
+  lamb_pred: 0.0005
+  lamb_imp: 0.0001
+  lamb_prop: 0.0001
+  dis_lamb: 0.001
+  abc_model_name: mlp
+
+Pareto Solution #6 (Trial 599):
+----------------------------------------
+Objective values:
+  auc: 0.782905
+  ndcg_20: 0.500961
+  f1_20: 0.145600
+
+All metrics:
+  mse: 0.103051
+  mae: 0.273097
+  auc: 0.782905
+  train_mse: 0.098142
+  train_mae: 0.262235
+  train_auc: 0.947309
+  ndcg_20: 0.500961
+  precision_20: 0.088200
+  recall_20: 0.416953
+  f1_20: 0.145600
+  ndcg: 0.500961
+  precision: 0.088200
+  recall: 0.416953
+  f1: 0.145600
+  training_time: 56.768858
+
+Parameters:
+  batch_size: 4096
+  gamma: 0.028425470508534566
+  G: 1
+  beta: 1
+  num_bins: 50
+  embedding_k: 16
+  embedding_k1: 32
+  pred_lr: 0.01
+  impu_lr: 0.005
+  prop_lr: 0.01
+  dis_lr: 0.005
+  lamb_pred: 0.0005
+  lamb_imp: 0.0001
+  lamb_prop: 0.0001
+  dis_lamb: 0.001
+  abc_model_name: mlp
+

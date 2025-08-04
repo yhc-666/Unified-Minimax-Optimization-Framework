@@ -1,0 +1,62 @@
+Dataset: coat
+Model Type: minimaxv4
+Metrics: auc (maximize)
+Number of trials: 2
+Number of Pareto optimal solutions: 2
+
+============================================================
+PARETO OPTIMAL SOLUTIONS
+============================================================
+
+Pareto Solution #1 (Trial 0):
+----------------------------------------
+Objective values:
+  auc: -inf
+
+All metrics:
+
+Parameters:
+  batch_size: 128
+  gamma: 0.049451073154463954
+  G: 1
+  beta: 0.01
+  num_bins: 20
+  embedding_k: 64
+  embedding_k1: 32
+  pred_lr: 0.005
+  impu_lr: 0.005
+  prop_lr: 0.005
+  dis_lr: 0.01
+  lamb_pred: 0.0001
+  lamb_imp: 1e-06
+  lamb_prop: 0.001
+  dis_lamb: 0.005
+  grad_clip_norm: 2.0
+  abc_model_name: logistic_regression
+
+Pareto Solution #2 (Trial 1):
+----------------------------------------
+Objective values:
+  auc: -inf
+
+All metrics:
+
+Parameters:
+  batch_size: 128
+  gamma: 0.03456632487382586
+  G: 6
+  beta: 0.1
+  num_bins: 10
+  embedding_k: 32
+  embedding_k1: 16
+  pred_lr: 0.005
+  impu_lr: 0.005
+  prop_lr: 0.01
+  dis_lr: 0.01
+  lamb_pred: 5e-06
+  lamb_imp: 5e-06
+  lamb_prop: 1e-05
+  dis_lamb: 0.0001
+  grad_clip_norm: 1.0
+  abc_model_name: mlp
+

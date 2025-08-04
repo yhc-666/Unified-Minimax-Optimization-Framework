@@ -12,15 +12,16 @@ import argparse
 import numpy as np
 import torch
 from sklearn.metrics import roc_auc_score
-from matrix_factorization_DT import MF_Minimax, MF_DRv2_BMSE_Imp, MF_DRv2_BMSE
+from matrix_factorization_DT import MF_Minimax, MF_MinimaxV2, MF_MinimaxV3, MF_MinimaxV4, MF_DRv2_BMSE_Imp, MF_DRv2_BMSE
 from dataset import load_data
-from utils import ndcg_func, recall_func, precision_func, rating_mat_to_sample, binarize, shuffle
+from utils import ndcg_func, recall_func, precision_func, rating_mat_to_sample, binarize, shuffle, set_all_seeds, set_deterministic
 from matrix_factorization_DT import generate_total_sample
 import csv
 import os
 import time
 import scipy.sparse as sps
 import pandas as pd
+from tqdm import tqdm
 
 # Metric functions
 mse_func = lambda x,y: np.mean((x-y)**2)
@@ -65,20 +66,20 @@ HYPERPARAM_RANGES = {
         'abc_model_name': ['logistic_regression', 'mlp']
     },
     'kuai': {
-        'embedding_k': [16, 32, 64, 128, 256, 512],
-        'embedding_k1': [16, 32, 64, 128, 256, 512],
-        'pred_lr': [0.005, 0.01, 0.05],
-        'impu_lr': [0.005, 0.01, 0.05],
-        'prop_lr': [0.005, 0.01, 0.05],
-        'dis_lr': [0.005, 0.01, 0.05],
-        'lamb_pred': [1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3],
-        'lamb_imp': [1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3],
-        'lamb_prop': [1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3],
-        'dis_lamb': [1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3],
-        'gamma': (0.01, 10),
+        'embedding_k': [16, 32, 64],
+        'embedding_k1': [16, 32, 64],
+        'pred_lr': [0.005, 0.01],
+        'impu_lr': [0.005, 0.01],
+        'prop_lr': [0.005, 0.01],
+        'dis_lr': [0.005, 0.01],
+        'lamb_pred': [1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3, 0.01],
+        'lamb_imp': [1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3, 0.01],
+        'lamb_prop': [1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3, 0.01],
+        'dis_lamb': [1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3, 0.01],
+        'gamma': (0.01, 0.1),
         'beta': [0.01, 0.05, 0.1, 0.5, 1, 5, 10, 50, 100],
-        'G': [1, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20],
-        'num_bins': [5, 10, 15, 20, 25, 30, 35, 40, 45, 50],
+        'G': [1, 2, 4, 6, 8, 10, 12],
+        'num_bins': [5, 10, 15, 20, 25, 30, 40, 50, 50],
         'batch_size': [4096],
         'abc_model_name': ['logistic_regression', 'mlp']
     }
@@ -121,9 +122,9 @@ DRV2_HYPERPARAM_RANGES = {
         'num_epoch': [500]
     },
     'kuai': {
-        'embedding_k': [32, 64, 128],
-        'embedding_k1': [32, 64, 128],
-        'embedding_k_prop': [32, 64, 128],
+        'embedding_k': [64, 128, 256],
+        'embedding_k1': [64, 128, 256],
+        'embedding_k_prop': [64, 128, 256],
         'pred_lr': [0.005, 0.01],
         'impu_lr': [0.005, 0.01],  # Only for DRv2_Imp
         'prop_lr': [0.005, 0.01],
@@ -139,8 +140,12 @@ DRV2_HYPERPARAM_RANGES = {
     }
 }
 
-def train_and_eval_with_params(dataset_name, train_args, model_args):
+def train_and_eval_with_params(dataset_name, train_args, model_args, seed=2020):
     """Train and evaluate model with given hyperparameters"""
+    
+    # Set seeds for reproducibility
+    set_all_seeds(seed)
+    set_deterministic()
     
     # Set up data based on dataset
     top_k_list = [5]
@@ -209,13 +214,42 @@ def train_and_eval_with_params(dataset_name, train_args, model_args):
         y_test = binarize(y_test, 3)
 
     # Create model
-    mf = MF_Minimax(num_user, num_item, 
-                    batch_size=train_args['batch_size'], 
-                    batch_size_prop=train_args['batch_size_prop'],
-                    embedding_k=model_args['embedding_k'], 
-                    embedding_k1=model_args['embedding_k1'],
-                    abc_model_name=model_args.get('abc_model_name', 'logistic_regression'),
-                    copy_model_pred=model_args.get('copy_model_pred', 1))
+    if model_args.get('model_type') == 'minimaxv2':
+        # For MinimaxV2, use unified embedding size
+        mf = MF_MinimaxV2(num_user, num_item, 
+                         batch_size=train_args['batch_size'], 
+                         batch_size_prop=train_args['batch_size_prop'],
+                         embedding_k=model_args['embedding_k'], 
+                         embedding_k1=model_args['embedding_k'],  # Same as embedding_k for unified size
+                         abc_model_name=model_args.get('abc_model_name', 'logistic_regression'),
+                         copy_model_pred=model_args.get('copy_model_pred', 1))
+    elif model_args.get('model_type') == 'minimaxv3':
+        # For MinimaxV3, use enhanced architecture with dropout
+        mf = MF_MinimaxV3(num_user, num_item, 
+                         batch_size=train_args['batch_size'], 
+                         batch_size_prop=train_args['batch_size_prop'],
+                         embedding_k=model_args['embedding_k'], 
+                         embedding_k1=model_args['embedding_k1'],
+                         dropout_rate=model_args.get('dropout_rate', 0.2),
+                         abc_model_name=model_args.get('abc_model_name', 'mlp_enhanced'),
+                         copy_model_pred=model_args.get('copy_model_pred', 1))
+    elif model_args.get('model_type') == 'minimaxv4':
+        # For MinimaxV4, use standard models with V3's training improvements
+        mf = MF_MinimaxV4(num_user, num_item, 
+                         batch_size=train_args['batch_size'], 
+                         batch_size_prop=train_args['batch_size_prop'],
+                         embedding_k=model_args['embedding_k'], 
+                         embedding_k1=model_args['embedding_k1'],
+                         abc_model_name=model_args.get('abc_model_name', 'logistic_regression'),
+                         copy_model_pred=model_args.get('copy_model_pred', 1))
+    else:
+        mf = MF_Minimax(num_user, num_item, 
+                        batch_size=train_args['batch_size'], 
+                        batch_size_prop=train_args['batch_size_prop'],
+                        embedding_k=model_args['embedding_k'], 
+                        embedding_k1=model_args['embedding_k1'],
+                        abc_model_name=model_args.get('abc_model_name', 'logistic_regression'),
+                        copy_model_pred=model_args.get('copy_model_pred', 1))
     
     # First compute propensity scores
     mf._compute_IPS(x_train, 
@@ -224,25 +258,80 @@ def train_and_eval_with_params(dataset_name, train_args, model_args):
                     lamb=model_args.get('prop_lamb', model_args['lamb_prop']),
                     verbose=False)
     
-    # Then train the full model
-    mf.fit(x_train, y_train, 
-           pred_lr=model_args['pred_lr'], 
-           impu_lr=model_args['impu_lr'],
-           prop_lr=model_args['prop_lr'],
-           dis_lr=model_args['dis_lr'],
-           alpha=train_args.get('alpha', 0.5), 
-           beta=train_args['beta'], 
-           theta=train_args.get('theta', 1),
-           lamb_prop=model_args['lamb_prop'],
-           lamb_pred=model_args['lamb_pred'],
-           lamb_imp=model_args['lamb_imp'],
-           dis_lamb=model_args['dis_lamb'],
-           G=train_args["G"],
-           gamma=train_args['gamma'],
-           num_bins=train_args.get('num_bins', 10),
-           verbose=False)
+    # Create progress bar for training
+    pbar = tqdm(total=1000, desc="Training MF_Minimax", unit="epoch", leave=False)
+    last_train_auc = None
+    last_test_auc = None
+    
+    def progress_callback(epoch, total_epochs, loss, train_auc=None, test_auc=None):
+        nonlocal last_train_auc, last_test_auc
+        
+        # Update stored values
+        if train_auc is not None:
+            last_train_auc = train_auc
+        if test_auc is not None:
+            last_test_auc = test_auc
+        
+        # Update progress bar
+        pbar.n = epoch + 1
+        pbar.total = total_epochs  # Update total if different
+        
+        # Build description
+        desc_parts = [f"Loss: {loss:.1f}"]
+        if last_train_auc is not None:
+            desc_parts.append(f"Train: {last_train_auc:.4f}")
+        if last_test_auc is not None:
+            desc_parts.append(f"Test: {last_test_auc:.4f}")
+            # Add overfitting indicator
+            if last_train_auc is not None and last_train_auc - last_test_auc > 0.2:
+                desc_parts.append("⚠️ OVERFIT")
+        
+        pbar.set_description(" | ".join(desc_parts))
+        pbar.refresh()
+    
+    # Then train the full model with early stopping
+    fit_params = {
+        'x': x_train,
+        'y': y_train,
+        'x_test': x_test,
+        'y_test': y_test,
+        'pred_lr': model_args['pred_lr'],
+        'impu_lr': model_args['impu_lr'],
+        'prop_lr': model_args['prop_lr'],
+        'dis_lr': model_args['dis_lr'],
+        'alpha': train_args.get('alpha', 0.5),
+        'beta': train_args['beta'],
+        'theta': train_args.get('theta', 1),
+        'lamb_prop': model_args['lamb_prop'],
+        'lamb_pred': model_args['lamb_pred'],
+        'lamb_imp': model_args['lamb_imp'],
+        'dis_lamb': model_args['dis_lamb'],
+        'G': train_args["G"],
+        'gamma': train_args['gamma'],
+        'num_bins': train_args.get('num_bins', 10),
+        'verbose': False,
+        'early_stop_patience': 15,
+        'early_stop_min_delta': 1e-5,
+        'eval_freq': 1,
+        'progress_callback': progress_callback
+    }
+    
+    # Add extra parameters for MinimaxV3 and MinimaxV4
+    if model_args.get('model_type') in ['minimaxv3', 'minimaxv4']:
+        fit_params['grad_clip_norm'] = model_args.get('grad_clip_norm', 1.0)
+    
+    mf.fit(**fit_params)
+    
+    # Close progress bar
+    pbar.close()
 
-    # Evaluate
+    # Evaluate on training set
+    train_pred = mf.predict(x_train)
+    train_mse = mse_func(y_train, train_pred)
+    train_mae = mae_func(y_train, train_pred)
+    train_auc = roc_auc_score(y_train, train_pred)
+    
+    # Evaluate on test set
     test_pred = mf.predict(x_test)
     mse = mse_func(y_test, test_pred)
     mae = mae_func(y_test, test_pred)
@@ -256,6 +345,9 @@ def train_and_eval_with_params(dataset_name, train_args, model_args):
         'mse': mse,
         'mae': mae,
         'auc': auc,
+        'train_mse': train_mse,
+        'train_mae': train_mae,
+        'train_auc': train_auc,
     }
     
     # Add metrics for each k value
@@ -281,8 +373,12 @@ def train_and_eval_with_params(dataset_name, train_args, model_args):
     return results
 
 
-def train_and_eval_drv2(dataset_name, train_args, model_args, use_imputation=True):
+def train_and_eval_drv2(dataset_name, train_args, model_args, use_imputation=True, seed=2020):
     """Train and evaluate DR-V2 model with given hyperparameters"""
+    
+    # Set seeds for reproducibility
+    set_all_seeds(seed)
+    set_deterministic()
     
     # Set up data based on dataset
     top_k_list = [5]
@@ -360,7 +456,13 @@ def train_and_eval_drv2(dataset_name, train_args, model_args, use_imputation=Tru
                num_epoch=train_args.get('num_epoch', 500),
                verbose=False)
 
-    # Evaluate
+    # Evaluate on training set
+    train_pred = mf.predict(x_train)
+    train_mse = mse_func(y_train, train_pred)
+    train_mae = mae_func(y_train, train_pred)
+    train_auc = roc_auc_score(y_train, train_pred)
+    
+    # Evaluate on test set
     test_pred = mf.predict(x_test)
     mse = mse_func(y_test, test_pred)
     mae = mae_func(y_test, test_pred)
@@ -374,6 +476,9 @@ def train_and_eval_drv2(dataset_name, train_args, model_args, use_imputation=Tru
         'mse': mse,
         'mae': mae,
         'auc': auc,
+        'train_mse': train_mse,
+        'train_mae': train_mae,
+        'train_auc': train_auc,
     }
     
     # Add metrics for each k value
@@ -403,7 +508,7 @@ def objective(trial, args):
     """Optuna objective function for multi-objective optimization"""
     
     # 目前支持DRV2与minimax
-    if args.model_type == 'minimax':
+    if args.model_type in ['minimax', 'minimaxv2', 'minimaxv3', 'minimaxv4']:
         ranges = HYPERPARAM_RANGES[args.dataset]
     else:
         ranges = DRV2_HYPERPARAM_RANGES[args.dataset]
@@ -434,6 +539,96 @@ def objective(trial, args):
             'dis_lamb': trial.suggest_categorical('dis_lamb', ranges['dis_lamb']),
             'abc_model_name': trial.suggest_categorical('abc_model_name', ranges['abc_model_name']),
             'copy_model_pred': 1
+        }
+    elif args.model_type == 'minimaxv2':
+        # MinimaxV2 with unified embedding size
+        train_args = {
+            'batch_size': trial.suggest_categorical('batch_size', ranges['batch_size']),
+            'batch_size_prop': trial.suggest_categorical('batch_size', ranges['batch_size']),  # Same as batch_size
+            'gamma': trial.suggest_float('gamma', *ranges['gamma']),
+            'G': trial.suggest_categorical('G', ranges['G']),
+            'beta': trial.suggest_categorical('beta', ranges['beta']),
+            'num_bins': trial.suggest_categorical('num_bins', ranges['num_bins']),
+            'alpha': 0.5,  # Unused parameter
+            'theta': 1     # Unused parameter
+        }
+        
+        # Use single embedding_k for all components
+        embedding_k = trial.suggest_categorical('embedding_k', ranges['embedding_k'])
+        
+        model_args = {
+            'embedding_k': embedding_k,
+            'embedding_k1': embedding_k,  # Same as embedding_k for unified size
+            'pred_lr': trial.suggest_categorical('pred_lr', ranges['pred_lr']),
+            'impu_lr': trial.suggest_categorical('impu_lr', ranges['impu_lr']),
+            'prop_lr': trial.suggest_categorical('prop_lr', ranges['prop_lr']),
+            'dis_lr': trial.suggest_categorical('dis_lr', ranges['dis_lr']),
+            'lamb_pred': trial.suggest_categorical('lamb_pred', ranges['lamb_pred']),
+            'lamb_imp': trial.suggest_categorical('lamb_imp', ranges['lamb_imp']),
+            'lamb_prop': trial.suggest_categorical('lamb_prop', ranges['lamb_prop']),
+            'dis_lamb': trial.suggest_categorical('dis_lamb', ranges['dis_lamb']),
+            'abc_model_name': trial.suggest_categorical('abc_model_name', ranges['abc_model_name']),
+            'copy_model_pred': 1,
+            'model_type': 'minimaxv2'  # Pass model type to train function
+        }
+    elif args.model_type == 'minimaxv3':
+        # MinimaxV3 with enhanced architecture
+        train_args = {
+            'batch_size': trial.suggest_categorical('batch_size', ranges['batch_size']),
+            'batch_size_prop': trial.suggest_categorical('batch_size', ranges['batch_size']),  # Same as batch_size
+            'gamma': trial.suggest_float('gamma', *ranges['gamma']),
+            'G': trial.suggest_categorical('G', ranges['G']),
+            'beta': trial.suggest_categorical('beta', ranges['beta']),
+            'num_bins': trial.suggest_categorical('num_bins', ranges['num_bins']),
+            'alpha': 0.5,  # Unused parameter
+            'theta': 1     # Unused parameter
+        }
+        
+        model_args = {
+            'embedding_k': trial.suggest_categorical('embedding_k', ranges['embedding_k']),
+            'embedding_k1': trial.suggest_categorical('embedding_k1', ranges['embedding_k1']),
+            'pred_lr': trial.suggest_categorical('pred_lr', ranges['pred_lr']),
+            'impu_lr': trial.suggest_categorical('impu_lr', ranges['impu_lr']),
+            'prop_lr': trial.suggest_categorical('prop_lr', ranges['prop_lr']),
+            'dis_lr': trial.suggest_categorical('dis_lr', ranges['dis_lr']),
+            'lamb_pred': trial.suggest_categorical('lamb_pred', ranges['lamb_pred']),
+            'lamb_imp': trial.suggest_categorical('lamb_imp', ranges['lamb_imp']),
+            'lamb_prop': trial.suggest_categorical('lamb_prop', ranges['lamb_prop']),
+            'dis_lamb': trial.suggest_categorical('dis_lamb', ranges['dis_lamb']),
+            'dropout_rate': trial.suggest_categorical('dropout_rate', [0.1, 0.2, 0.3, 0.4]),
+            'grad_clip_norm': trial.suggest_categorical('grad_clip_norm', [0.5, 1.0, 2.0]),
+            'abc_model_name': trial.suggest_categorical('abc_model_name', ['mlp_enhanced', 'logistic_regression']),
+            'copy_model_pred': 1,
+            'model_type': 'minimaxv3'  # Pass model type to train function
+        }
+    elif args.model_type == 'minimaxv4':
+        # MinimaxV4 with standard models + V3 training improvements
+        train_args = {
+            'batch_size': trial.suggest_categorical('batch_size', ranges['batch_size']),
+            'batch_size_prop': trial.suggest_categorical('batch_size', ranges['batch_size']),  # Same as batch_size
+            'gamma': trial.suggest_float('gamma', *ranges['gamma']),
+            'G': trial.suggest_categorical('G', ranges['G']),
+            'beta': trial.suggest_categorical('beta', ranges['beta']),
+            'num_bins': trial.suggest_categorical('num_bins', ranges['num_bins']),
+            'alpha': 0.5,  # Unused parameter
+            'theta': 1     # Unused parameter
+        }
+        
+        model_args = {
+            'embedding_k': trial.suggest_categorical('embedding_k', ranges['embedding_k']),
+            'embedding_k1': trial.suggest_categorical('embedding_k1', ranges['embedding_k1']),
+            'pred_lr': trial.suggest_categorical('pred_lr', ranges['pred_lr']),
+            'impu_lr': trial.suggest_categorical('impu_lr', ranges['impu_lr']),
+            'prop_lr': trial.suggest_categorical('prop_lr', ranges['prop_lr']),
+            'dis_lr': trial.suggest_categorical('dis_lr', ranges['dis_lr']),
+            'lamb_pred': trial.suggest_categorical('lamb_pred', ranges['lamb_pred']),
+            'lamb_imp': trial.suggest_categorical('lamb_imp', ranges['lamb_imp']),
+            'lamb_prop': trial.suggest_categorical('lamb_prop', ranges['lamb_prop']),
+            'dis_lamb': trial.suggest_categorical('dis_lamb', ranges['dis_lamb']),
+            'grad_clip_norm': trial.suggest_categorical('grad_clip_norm', [0.5, 1.0, 2.0]),
+            'abc_model_name': trial.suggest_categorical('abc_model_name', ['logistic_regression', 'mlp']),
+            'copy_model_pred': 1,
+            'model_type': 'minimaxv4'  # Pass model type to train function
         }
     else:
         # DR-V2 parameters
@@ -470,11 +665,11 @@ def objective(trial, args):
     
     try:
         start_time = time.time()
-        if args.model_type == 'minimax':
-            results = train_and_eval_with_params(args.dataset, train_args, model_args)
+        if args.model_type in ['minimax', 'minimaxv2', 'minimaxv3', 'minimaxv4']:
+            results = train_and_eval_with_params(args.dataset, train_args, model_args, seed=args.seed)
         else:
             use_imputation = (args.model_type == 'drv2_imp')
-            results = train_and_eval_drv2(args.dataset, train_args, model_args, use_imputation)
+            results = train_and_eval_drv2(args.dataset, train_args, model_args, use_imputation, seed=args.seed)
         training_time = time.time() - start_time
         
         for metric_name, value in results.items():
@@ -533,8 +728,8 @@ def parse_args():
                         choices=['coat', 'yahoo', 'kuai'],
                         help='Dataset to use')
     parser.add_argument('--model_type', type=str, default='minimax',
-                        choices=['minimax', 'drv2', 'drv2_imp'],
-                        help='Model type to use: minimax (MF_Minimax), drv2 (MF_DRv2_BMSE), drv2_imp (MF_DRv2_BMSE_Imp)')
+                        choices=['minimax', 'minimaxv2', 'minimaxv3', 'minimaxv4', 'drv2', 'drv2_imp'],
+                        help='Model type to use: minimax (MF_Minimax), minimaxv2 (MF_MinimaxV2 with fixed binning), minimaxv3 (MF_MinimaxV3 with enhanced architecture), minimaxv4 (MF_MinimaxV4 with standard models + V3 training), drv2 (MF_DRv2_BMSE), drv2_imp (MF_DRv2_BMSE_Imp)')
     parser.add_argument('--n_trials', type=int, default=100,
                         help='Number of optuna trials')
     parser.add_argument('--metrics', type=str, nargs='+', default=['auc'],
@@ -570,8 +765,8 @@ def parse_args():
 def main():
     args = parse_args()
     
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
+    set_all_seeds(args.seed)
+    set_deterministic()
     
     os.makedirs(args.output_dir, exist_ok=True)
     

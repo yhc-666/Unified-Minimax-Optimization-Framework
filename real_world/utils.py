@@ -1,10 +1,32 @@
 # -*- coding: utf-8 -*-
 import numpy as np
 from collections import defaultdict
+import torch
+import random
 
 # environmental setting
 NUM_USER = 10
 NUM_ITEM = 1000
+
+
+def set_all_seeds(seed):
+    """Set all random seeds for reproducibility"""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
+
+def set_deterministic():
+    """Enable deterministic mode for PyTorch"""
+    if torch.cuda.is_available():
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+    # Note: torch.use_deterministic_algorithms(True) may cause errors with some operations
+    # Only enable if you're sure all operations support it
+    # torch.use_deterministic_algorithms(True)
 
 
 "Build several tools for simulation."

@@ -37,7 +37,7 @@ def minmax_normalize(df, metrics):
     
     return pd.DataFrame(normalized_data)
 
-def create_bar_chart(df_normalized, metrics, output_path='metric_comparison.png'):
+def create_bar_chart(df_normalized, metrics, output_path='metric_comparison.png', input_path=None):
     """Create a grouped bar chart similar to the reference image."""
     
     # Set up the plot style
@@ -67,34 +67,49 @@ def create_bar_chart(df_normalized, metrics, output_path='metric_comparison.png'
         min_bar_height = 0.02
         values_with_min = [max(v, min_bar_height) for v in values]
         
-        ax.bar(positions, values_with_min, bar_width, label=model, color=colors[i])
+        bars = ax.bar(positions, values_with_min, bar_width, label=model, color=colors[i])
     
     # Customize the plot
-    ax.set_xlabel('Metric', fontsize=16, fontweight='bold')
-    ax.set_ylabel('Normalized Metric Value', fontsize=16, fontweight='bold')
-    ax.set_title('Controlling One Metric Does Not Control Others', 
-                 fontsize=18, fontweight='bold', pad=20)
+    ax.set_xlabel('Metric', fontsize=24, fontweight='bold')
+    ax.set_ylabel('Normalized Metric Value', fontsize=24, fontweight='bold')
+    # Extract p value from input path if provided
+    if input_path:
+        import re
+        p_match = re.search(r'_p(\d+\.?\d*)', input_path)
+        if p_match:
+            p_value = p_match.group(1)
+            title = f'p = {p_value}'
+        else:
+            title = 'Metric Comparison'
+    else:
+        title = 'Metric Comparison'
+    
+    ax.set_title(title, fontsize=26, fontweight='bold', pad=20)
     
     # Set x-axis labels
     metric_labels = {
-        'ECE': 'Calibration Error',
-        'BMSE': 'Balancing Error', 
+        'ECE': 'ECE',
+        'BMSE': 'BMSE', 
         'DR_Bias': 'DR Bias',
         'DR_Variance': 'DR Variance'
     }
     ax.set_xticks(indices)
-    ax.set_xticklabels([metric_labels.get(m, m) for m in metrics], fontsize=14)
+    ax.set_xticklabels([metric_labels.get(m, m) for m in metrics], fontsize=20, fontweight='bold')
     
     # Set y-axis limits
     ax.set_ylim(0, 1.05)
     
     # Customize y-axis
-    ax.tick_params(axis='y', labelsize=12)
+    ax.tick_params(axis='y', labelsize=18)
+    # Make y-axis labels bold
+    for label in ax.get_yticklabels():
+        label.set_fontweight('bold')
     
-    # Add legend with better styling
-    legend = ax.legend(title='Models', bbox_to_anchor=(1.02, 1), loc='upper left', 
-                      frameon=True, fontsize=12)
-    legend.get_title().set_fontsize(14)
+    # Add legend with better styling - vertical on right side
+    legend = ax.legend(title='Model', bbox_to_anchor=(1.02, 1), loc='upper left', 
+                      frameon=True, fontsize=24, 
+                      prop={'weight': 'bold', 'size': 24})
+    legend.get_title().set_fontsize(26)
     legend.get_title().set_fontweight('bold')
     
     # Add grid
@@ -116,9 +131,9 @@ def create_bar_chart(df_normalized, metrics, output_path='metric_comparison.png'
 
 def main():
     parser = argparse.ArgumentParser(description='Plot normalized metrics from evaluation results')
-    parser.add_argument('--input', type=str, default='evaluation_results_p0.4.csv',
+    parser.add_argument('--input', type=str, default='semi-synthetic/outputs/evaluation_results_p0.4.csv',
                        help='Path to evaluation results CSV file')
-    parser.add_argument('--output', type=str, default='metric_comparison.png',
+    parser.add_argument('--output', type=str, default='semi-synthetic/outputs/metric_comparison_0.4.png',
                        help='Output path for the plot')
     parser.add_argument('--metrics', nargs='+', 
                        default=['ECE', 'BMSE', 'DR_Bias', 'DR_Variance'],
@@ -158,7 +173,7 @@ def main():
     
     # Create the plot
     print(f"\nCreating bar chart...")
-    fig, ax = create_bar_chart(df_normalized, args.metrics, args.output)
+    fig, ax = create_bar_chart(df_normalized, args.metrics, args.output, args.input)
     
     print(f"Plot saved to {args.output}")
     print(f"PDF version saved to {args.output.replace('.png', '.pdf')}")

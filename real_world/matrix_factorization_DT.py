@@ -2,13 +2,13 @@
 import scipy.sparse as sps
 import numpy as np
 import torch
-torch.manual_seed(2020)
 from torch import nn
 import torch.nn.functional as F
 from math import sqrt
 import pdb
 import time
 from tqdm import tqdm
+import copy
 
 from sklearn.metrics import roc_auc_score
 import matplotlib.pyplot as plt
@@ -1437,9 +1437,21 @@ class logistic_regression(nn.Module):
         
     def forward(self, x_or_user_emb, item_emb=None):
         if item_emb is None:
-            # x is indices
-            user_emb = self.user_emb_table(x_or_user_emb[:, 0])
-            item_emb = self.item_emb_table(x_or_user_emb[:, 1])
+            # x is indices - handle both numpy arrays and tensors
+            if isinstance(x_or_user_emb, np.ndarray):
+                user_idx = torch.LongTensor(x_or_user_emb[:, 0])
+                item_idx = torch.LongTensor(x_or_user_emb[:, 1])
+            else:  # already a tensor
+                user_idx = x_or_user_emb[:, 0].long()
+                item_idx = x_or_user_emb[:, 1].long()
+            
+            # Move to device if needed
+            device = next(self.parameters()).device
+            user_idx = user_idx.to(device)
+            item_idx = item_idx.to(device)
+            
+            user_emb = self.user_emb_table(user_idx)
+            item_emb = self.item_emb_table(item_idx)
         else:
             # x_or_user_emb is user_emb, item_emb is provided
             user_emb = x_or_user_emb
@@ -1449,8 +1461,21 @@ class logistic_regression(nn.Module):
         return torch.sigmoid(torch.squeeze(out))
     
     def forward_logit(self, x):
-        user_emb = self.user_emb_table(x[:, 0])
-        item_emb = self.item_emb_table(x[:, 1])
+        # Handle both numpy arrays and tensors
+        if isinstance(x, np.ndarray):
+            user_idx = torch.LongTensor(x[:, 0])
+            item_idx = torch.LongTensor(x[:, 1])
+        else:  # already a tensor
+            user_idx = x[:, 0].long()
+            item_idx = x[:, 1].long()
+        
+        # Move to device if needed
+        device = next(self.parameters()).device
+        user_idx = user_idx.to(device)
+        item_idx = item_idx.to(device)
+        
+        user_emb = self.user_emb_table(user_idx)
+        item_emb = self.item_emb_table(item_idx)
         z_emb = torch.cat([user_emb, item_emb], axis=1)
         out = self.linear_1(z_emb)
         return torch.squeeze(out)      
@@ -1466,8 +1491,20 @@ class logistic_regression(nn.Module):
             return pred
     
     def get_emb(self, x):
-        user_emb = self.user_emb_table(x[:, 0])
-        item_emb = self.item_emb_table(x[:, 1])
+        # Handle both numpy arrays and tensors
+        if isinstance(x, np.ndarray):
+            user_idx = torch.LongTensor(x[:, 0])
+            item_idx = torch.LongTensor(x[:, 1])
+        else:  # already a tensor
+            user_idx = x[:, 0].long()
+            item_idx = x[:, 1].long()
+        
+        device = next(self.parameters()).device
+        user_idx = user_idx.to(device)
+        item_idx = item_idx.to(device)
+        
+        user_emb = self.user_emb_table(user_idx)
+        item_emb = self.item_emb_table(item_idx)
         return user_emb, item_emb
 
 
@@ -1593,16 +1630,19 @@ class MF_Minimax(nn.Module):
             
         return epoch
 
-    def fit(self, x, y, G=4, alpha=1, beta=1, theta=1, num_epoch=1000, 
+    def fit(self, x, y, x_test=None, y_test=None, G=4, alpha=1, beta=1, theta=1, num_epoch=1000, 
             pred_lr=0.05, impu_lr=0.05, prop_lr=0.05, dis_lr=0.05,
             lamb_prop=0, lamb_pred=0, lamb_imp=0, dis_lamb=0, gamma=0.05, num_bins=10,
-            tol=1e-4, verbose=True):
+            tol=1e-4, verbose=True, early_stop_patience=20, early_stop_min_delta=1e-4, 
+            eval_freq=10, progress_callback=None):
         """
         Train the MF_Minimax model using adversarial propensity learning and doubly robust estimation
         
         Args:
             x: Training user-item pairs
             y: Training ratings
+            x_test: Test user-item pairs (optional, for early stopping)
+            y_test: Test ratings (optional, for early stopping)
             G: Ratio of unobserved to observed samples for DR estimation
             alpha: Unused parameter (kept for compatibility)
             beta: Weight for adversarial loss in propensity training (higher = more adversarial regularization)
@@ -1618,8 +1658,12 @@ class MF_Minimax(nn.Module):
             dis_lamb: Weight decay for discriminator model
             gamma: Propensity score clipping threshold (avoids extreme importance weights)
             num_bins: Number of bins for propensity score stratification
-            tol: Early stopping tolerance
+            tol: Early stopping tolerance for training loss
             verbose: Whether to print training progress
+            early_stop_patience: Patience for early stopping based on test AUC (if test data provided)
+            early_stop_min_delta: Minimum improvement required to reset patience counter
+            eval_freq: Frequency of evaluation on test set (every N epochs)
+            progress_callback: Optional callback function for progress updates (epoch, total_epochs, loss, train_auc, test_auc)
         """ 
         
         print('Stage2: fitting', G, alpha, beta, theta, gamma, num_bins, pred_lr, impu_lr, prop_lr, dis_lr, lamb_prop, lamb_pred, lamb_imp, dis_lamb)
@@ -1645,6 +1689,23 @@ class MF_Minimax(nn.Module):
         
         bin_edges = torch.linspace(0, 1, steps=int(num_bins) + 1, device=self.device)[1:-1]
         print('bin_edges', bin_edges)
+        
+        # Initialize early stopping variables
+        use_early_stopping = x_test is not None and y_test is not None
+        if use_early_stopping:
+            from sklearn.metrics import roc_auc_score
+            best_test_auc = -float('inf')
+            patience_counter = 0
+            best_epoch = 0
+            # Save initial model states
+            best_model_states = {
+                'pred': self.model_pred.state_dict(),
+                'impu': self.model_impu.state_dict(),
+                'prop': self.model_prop.state_dict(),
+                'abc': self.model_abc.state_dict()
+            }
+            if verbose:
+                print(f"Early stopping enabled: patience={early_stop_patience}, min_delta={early_stop_min_delta}, eval_freq={eval_freq}")
         
         for epoch in tqdm(range(num_epoch), desc="Training Minimax", disable=not verbose):
             all_idx = np.arange(num_samples)
@@ -1760,9 +1821,76 @@ class MF_Minimax(nn.Module):
 
             last_loss = epoch_loss
             
-            if epoch % 10 == 0 and verbose:
-                print("[Minimax] epoch:{}, xent:{}".format(epoch, epoch_loss))
+            # Variables to track for callback
+            current_train_auc = None
+            current_test_auc = None
+            
+            # Calculate train AUC periodically for callback
+            if progress_callback and (epoch + 1) % eval_freq == 0:
+                with torch.no_grad():
+                    train_pred = self.predict(x)
+                    current_train_auc = roc_auc_score(y, train_pred)
+            
+            # Early stopping based on test AUC
+            if use_early_stopping and (epoch + 1) % eval_freq == 0:
+                # Evaluate on test set
+                with torch.no_grad():
+                    test_pred = self.predict(x_test)
+                    test_auc = roc_auc_score(y_test, test_pred)
+                    current_test_auc = test_auc  # Store for callback
                 
+                # Check if improvement
+                if test_auc > best_test_auc + early_stop_min_delta:
+                    best_test_auc = test_auc
+                    best_epoch = epoch
+                    patience_counter = 0
+                    # Save best model states
+                    best_model_states = {
+                        'pred': self.model_pred.state_dict(),
+                        'impu': self.model_impu.state_dict(),
+                        'prop': self.model_prop.state_dict(),
+                        'abc': self.model_abc.state_dict()
+                    }
+                    if verbose:
+                        print(f"[Minimax] epoch:{epoch}, xent:{epoch_loss:.4f}, test_auc:{test_auc:.4f} (best)")
+                else:
+                    patience_counter += 1
+                    if verbose:
+                        print(f"[Minimax] epoch:{epoch}, xent:{epoch_loss:.4f}, test_auc:{test_auc:.4f} (patience: {patience_counter}/{early_stop_patience})")
+                
+                # Check if should stop
+                if patience_counter >= early_stop_patience:
+                    if verbose:
+                        print(f"[Minimax] Early stopping triggered at epoch {epoch}. Best epoch: {best_epoch} with test AUC: {best_test_auc:.4f}")
+                    # Restore best model states
+                    self.model_pred.load_state_dict(best_model_states['pred'])
+                    self.model_impu.load_state_dict(best_model_states['impu'])
+                    self.model_prop.load_state_dict(best_model_states['prop'])
+                    self.model_abc.load_state_dict(best_model_states['abc'])
+                    return best_epoch
+            
+            elif epoch % 10 == 0 and verbose:
+                print("[Minimax] epoch:{}, xent:{}".format(epoch, epoch_loss))
+            
+            # Call progress callback if provided
+            if progress_callback:
+                progress_callback(
+                    epoch=epoch,
+                    total_epochs=num_epoch,
+                    loss=epoch_loss,
+                    train_auc=current_train_auc,
+                    test_auc=current_test_auc
+                )
+                
+        # If we complete all epochs and early stopping was used, restore best model
+        if use_early_stopping and best_epoch < epoch:
+            if verbose:
+                print(f"[Minimax] Training completed. Restoring best model from epoch {best_epoch} with test AUC: {best_test_auc:.4f}")
+            self.model_pred.load_state_dict(best_model_states['pred'])
+            self.model_impu.load_state_dict(best_model_states['impu'])
+            self.model_prop.load_state_dict(best_model_states['prop'])
+            self.model_abc.load_state_dict(best_model_states['abc'])
+            
         return epoch
     
     def predict(self, x):
@@ -1770,6 +1898,348 @@ class MF_Minimax(nn.Module):
         pred = self.model_pred.predict(x_tensor)
         return pred.detach().cpu().numpy()
 
+
+class MF_MinimaxV2(nn.Module):
+    """
+    MF_MinimaxV2: Uses fixed uniform binning (dr_jl_abc style) instead of equal frequency binning
+    """
+    def __init__(self, num_users, num_items, batch_size, batch_size_prop, embedding_k=4, embedding_k1=8, 
+                 abc_model_name='logistic_regression', copy_model_pred=1, *args, **kwargs):
+        super().__init__()
+        self.num_users = num_users
+        self.num_items = num_items
+        self.embedding_k = embedding_k
+        self.embedding_k1 = embedding_k1
+        self.batch_size = batch_size
+        self.batch_size_prop = batch_size_prop  # Same as batch_size for simplicity
+        
+        # Use MF from matrix_factorization_DT.py for prediction and imputation
+        self.model_pred = MF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1)
+        self.model_impu = MF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1)
+        
+        # Use logistic_regression for propensity
+        self.model_prop = logistic_regression(self.num_users, self.num_items, embedding_k=self.embedding_k)
+        
+        # Use logistic_regression or mlp for abc
+        if abc_model_name == 'logistic_regression':
+            self.model_abc = logistic_regression(self.num_users, self.num_items, embedding_k=self.embedding_k)
+        elif abc_model_name == 'mlp':
+            self.model_abc = mlp(self.num_users, self.num_items, embedding_k=self.embedding_k)
+        
+        # Copy model weights if specified
+        if copy_model_pred == 1:
+            self.model_impu.load_state_dict(self.model_pred.state_dict())
+        
+        # Move to cuda if available
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.model_pred.to(self.device)
+        self.model_impu.to(self.device)
+        self.model_prop.to(self.device)
+        self.model_abc.to(self.device)
+        
+        self.sigmoid = torch.nn.Sigmoid()
+        self.xent_func = torch.nn.BCELoss()
+
+    # 原来lamb=0
+    def _compute_IPS(self, x, num_epoch=1000, lr=0.05, lamb=1e-5, tol=1e-4, verbose=False):
+        print('Stage1: computing_IPS', lr, lamb)
+        
+        # Generate obs from x
+        obs = sps.csr_matrix((np.ones(x.shape[0]), (x[:, 0], x[:, 1])), 
+                            shape=(self.num_users, self.num_items), dtype=np.float32).toarray().reshape(-1)
+        
+        optimizer_propensity = torch.optim.Adam(self.model_prop.parameters(), lr=lr, weight_decay=lamb)
+        
+        num_samples = len(obs)
+        total_batch = num_samples // self.batch_size_prop
+        x_all = generate_total_sample(self.num_users, self.num_items)
+        
+        last_loss = 1e9
+        early_stop = 0
+        stop = 5  # Default stop value
+
+        for epoch in tqdm(range(num_epoch), desc="Computing IPS", disable=not verbose):
+            ul_idxs = np.arange(x_all.shape[0])
+            np.random.shuffle(ul_idxs)
+
+            epoch_loss = 0
+            for idx in range(total_batch):
+                x_all_idx = ul_idxs[idx*self.batch_size_prop: (idx+1)*self.batch_size_prop]
+                
+                x_sampled = x_all[x_all_idx]
+                prop = self.model_prop(torch.LongTensor(x_sampled).to(self.device))
+
+                sub_obs = obs[x_all_idx]
+                sub_obs = torch.Tensor(sub_obs).to(self.device)
+                
+                prop_loss = F.mse_loss(prop, sub_obs)
+                
+                optimizer_propensity.zero_grad()
+                prop_loss.backward()
+                optimizer_propensity.step()
+                
+                epoch_loss += prop_loss.detach().cpu().numpy()
+
+            relative_loss_div = (last_loss - epoch_loss) / (last_loss + 1e-12)
+            if  relative_loss_div < tol:
+                if early_stop > stop:
+                    if verbose:
+                        print("[MinimaxV2-PS] epoch:{}, xent:{}".format(epoch, epoch_loss))
+                    return epoch
+                else:
+                    early_stop += 1
+                    
+            last_loss = epoch_loss
+            
+            if epoch % 10 == 0 and verbose:
+                print("[MinimaxV2-PS] epoch:{}, xent:{}".format(epoch, epoch_loss))
+            
+        return epoch
+
+    def fit(self, x, y, x_test=None, y_test=None, G=4, alpha=1, beta=1, theta=1, num_epoch=1000, 
+            pred_lr=0.05, impu_lr=0.05, prop_lr=0.05, dis_lr=0.05,
+            lamb_prop=0, lamb_pred=0, lamb_imp=0, dis_lamb=0, gamma=0.05, num_bins=10,
+            tol=1e-4, verbose=True, early_stop_patience=20, early_stop_min_delta=1e-4, 
+            eval_freq=10, progress_callback=None):
+        """
+        Train the MF_MinimaxV2 model using fixed uniform binning (dr_jl_abc style)
+        
+        Args: Same as MF_Minimax
+        """ 
+        
+        print('Stage2: fitting (V2 with fixed binning)', G, alpha, beta, theta, gamma, num_bins, pred_lr, impu_lr, prop_lr, dis_lr, lamb_prop, lamb_pred, lamb_imp, dis_lamb)
+        
+        # Create optimizers with separate learning rates and weight decays
+        optimizer_prediction = torch.optim.Adam(self.model_pred.parameters(), lr=pred_lr, weight_decay=lamb_pred)
+        optimizer_imputation = torch.optim.Adam(self.model_impu.parameters(), lr=impu_lr, weight_decay=lamb_imp)
+        optimizer_propensity = torch.optim.Adam(self.model_prop.parameters(), lr=prop_lr, weight_decay=lamb_prop)
+        optimizer_dis = torch.optim.Adam(self.model_abc.parameters(), lr=dis_lr, weight_decay=dis_lamb)
+        
+        
+        # Generate all samples and obs
+        x_all = generate_total_sample(self.num_users, self.num_items)
+        obs = sps.csr_matrix((np.ones(len(y)), (x[:, 0], x[:, 1])), 
+                            shape=(self.num_users, self.num_items), dtype=np.float32).toarray().reshape(-1)
+        
+        num_samples = len(x)
+        total_batch = num_samples // self.batch_size
+        
+        last_loss = 1e9
+        early_stop = 0
+        stop = 5  # Default stop value
+        
+        # Use fixed binning like dr_jl_abc (full range including 0 and 1)
+        bin_edges = torch.linspace(0, 1, steps=num_bins + 1, device=self.device)
+        print('bin_edges (V2 fixed)', bin_edges)
+        
+        # Initialize early stopping variables
+        use_early_stopping = x_test is not None and y_test is not None
+        if use_early_stopping:
+            from sklearn.metrics import roc_auc_score
+            best_test_auc = -float('inf')
+            patience_counter = 0
+            best_epoch = 0
+            # Save initial model states
+            best_model_states = {
+                'pred': self.model_pred.state_dict(),
+                'impu': self.model_impu.state_dict(),
+                'prop': self.model_prop.state_dict(),
+                'abc': self.model_abc.state_dict()
+            }
+            if verbose:
+                print(f"Early stopping enabled: patience={early_stop_patience}, min_delta={early_stop_min_delta}, eval_freq={eval_freq}")
+        
+        for epoch in tqdm(range(num_epoch), desc="Training MinimaxV2", disable=not verbose):
+            all_idx = np.arange(num_samples)
+            np.random.shuffle(all_idx)
+            ul_idxs = np.arange(x_all.shape[0])
+            np.random.shuffle(ul_idxs)
+
+            epoch_loss = 0
+            for idx in range(total_batch):  
+                # data prepare
+                selected_idx = all_idx[idx*self.batch_size:(idx+1)*self.batch_size]
+                sub_x = x[selected_idx] 
+                sub_y = y[selected_idx]
+                sub_x_tensor = torch.LongTensor(sub_x).to(self.device)
+                sub_y_tensor = torch.Tensor(sub_y).to(self.device)
+                 
+                # Add bounds checking to prevent index out of range
+                start_idx = G * idx * self.batch_size
+                end_idx = min(G * (idx + 1) * self.batch_size, len(ul_idxs))
+                
+                if start_idx >= len(ul_idxs):
+                    break  # No more samples available
+                    
+                x_all_idx = ul_idxs[start_idx:end_idx]
+                
+                if len(x_all_idx) == 0:
+                    continue  # Skip empty batches
+                    
+                x_sampled = x_all[x_all_idx]
+                x_sampled_tensor = torch.LongTensor(x_sampled).to(self.device)
+                obs_sampled = torch.Tensor(obs[x_all_idx]).to(self.device)
+                
+                # propensity model
+                prop_sampled = self.model_prop(x_sampled_tensor)
+                with torch.no_grad():
+                    prop_user_emb, prop_item_emb = self.model_prop.get_emb(x_sampled_tensor)
+                
+                # Use fixed binning like dr_jl_abc
+                bin_indices = torch.bucketize(prop_sampled.detach(), bin_edges, right=False) - 1
+                bin_indices = torch.clamp(bin_indices, 0, num_bins - 1)  
+
+                # Use dynamic num_classes like dr_jl_abc
+                bin_sum_index = torch.nn.functional.one_hot(bin_indices, num_classes=bin_indices.max() + 1).float()
+                
+                # Pass embeddings to ABC model, not indices
+                prop_error_dis = self.model_abc(prop_user_emb.detach(), prop_item_emb.detach()) * (obs_sampled - prop_sampled.detach())
+                bin_prop_error_dis = torch.matmul(prop_error_dis.unsqueeze(0), bin_sum_index).squeeze(0)
+                
+                prop_abc_loss_dis = - bin_prop_error_dis.abs().sum() / float(num_samples)
+                
+                optimizer_dis.zero_grad()
+                prop_abc_loss_dis.backward()
+                optimizer_dis.step()
+                
+                
+                prop_error_prop = self.model_abc.predict(prop_user_emb.detach(), prop_item_emb.detach()).detach() * (obs_sampled - prop_sampled)
+                bin_prop_error_prop = torch.matmul(prop_error_prop.unsqueeze(0), bin_sum_index).squeeze(0)
+                
+                prop_abc_loss_prop = bin_prop_error_prop.abs().sum() / float(num_samples)
+                
+                prop_nll_loss = F.binary_cross_entropy(prop_sampled, obs_sampled, reduction='mean')
+                
+                prop_loss = prop_nll_loss + beta * prop_abc_loss_prop
+                
+                optimizer_propensity.zero_grad()
+                prop_loss.backward()
+                optimizer_propensity.step()
+                
+                # prediction model
+                inv_prop = 1.0 / torch.clip(self.model_prop.predict(sub_x_tensor), gamma, 1.0)
+
+                pred = self.model_pred(sub_x_tensor)
+                imputation_y = self.model_impu.predict(sub_x_tensor)              
+
+                pred_u = self.model_pred(x_sampled_tensor) 
+                imputation_y1 = self.model_impu.predict(x_sampled_tensor)             
+
+                xent_loss = F.binary_cross_entropy(pred, sub_y_tensor, weight=inv_prop.detach(), reduction='sum')
+                imputation_loss = F.binary_cross_entropy(pred, imputation_y.detach(), reduction='sum')
+
+                ips_loss = (xent_loss - imputation_loss) # batch size
+
+                direct_loss = F.binary_cross_entropy(pred_u, imputation_y1.detach(), reduction='sum')
+                
+                dr_loss = (ips_loss + direct_loss) / float(x_sampled.shape[0])
+                
+                optimizer_prediction.zero_grad()
+                dr_loss.backward()
+                optimizer_prediction.step()
+                
+                # imputation model
+                pred = self.model_pred.predict(sub_x_tensor)
+                imputation_y = self.model_impu(sub_x_tensor)
+                
+                e_loss = F.binary_cross_entropy(pred.detach(), sub_y_tensor, reduction='none')
+                e_hat_loss = F.binary_cross_entropy(imputation_y, pred.detach(), reduction='none')
+
+                imp_loss = torch.sum(((e_loss - e_hat_loss) ** 2) * inv_prop.detach()) / float(x_sampled.shape[0])
+
+                optimizer_imputation.zero_grad()
+                imp_loss.backward()
+                optimizer_imputation.step()
+                
+                epoch_loss += xent_loss.detach().cpu().numpy()
+            
+            relative_loss_div = (last_loss - epoch_loss) / (last_loss + 1e-12)
+            if  relative_loss_div < tol:
+                if early_stop > stop:
+                    if verbose:
+                        print("[MinimaxV2] epoch:{}, xent:{}".format(epoch, epoch_loss))
+                    return epoch
+                else:
+                    early_stop += 1
+
+            last_loss = epoch_loss
+            
+            # Variables to track for callback
+            current_train_auc = None
+            current_test_auc = None
+            
+            # Calculate train AUC periodically for callback
+            if progress_callback and (epoch + 1) % eval_freq == 0:
+                with torch.no_grad():
+                    train_pred = self.predict(x)
+                    current_train_auc = roc_auc_score(y, train_pred)
+            
+            # Early stopping based on test AUC
+            if use_early_stopping and (epoch + 1) % eval_freq == 0:
+                # Evaluate on test set
+                with torch.no_grad():
+                    test_pred = self.predict(x_test)
+                    test_auc = roc_auc_score(y_test, test_pred)
+                    current_test_auc = test_auc  # Store for callback
+                
+                # Check if improvement
+                if test_auc > best_test_auc + early_stop_min_delta:
+                    best_test_auc = test_auc
+                    best_epoch = epoch
+                    patience_counter = 0
+                    # Save best model states
+                    best_model_states = {
+                        'pred': self.model_pred.state_dict(),
+                        'impu': self.model_impu.state_dict(),
+                        'prop': self.model_prop.state_dict(),
+                        'abc': self.model_abc.state_dict()
+                    }
+                    if verbose:
+                        print(f"[MinimaxV2] epoch:{epoch}, xent:{epoch_loss:.4f}, test_auc:{test_auc:.4f} (best)")
+                else:
+                    patience_counter += 1
+                    if verbose:
+                        print(f"[MinimaxV2] epoch:{epoch}, xent:{epoch_loss:.4f}, test_auc:{test_auc:.4f} (patience: {patience_counter}/{early_stop_patience})")
+                
+                # Check if should stop
+                if patience_counter >= early_stop_patience:
+                    if verbose:
+                        print(f"[MinimaxV2] Early stopping triggered at epoch {epoch}. Best epoch: {best_epoch} with test AUC: {best_test_auc:.4f}")
+                    # Restore best model states
+                    self.model_pred.load_state_dict(best_model_states['pred'])
+                    self.model_impu.load_state_dict(best_model_states['impu'])
+                    self.model_prop.load_state_dict(best_model_states['prop'])
+                    self.model_abc.load_state_dict(best_model_states['abc'])
+                    return best_epoch
+            
+            elif epoch % 10 == 0 and verbose:
+                print("[MinimaxV2] epoch:{}, xent:{}".format(epoch, epoch_loss))
+            
+            # Call progress callback if provided
+            if progress_callback:
+                progress_callback(
+                    epoch=epoch,
+                    total_epochs=num_epoch,
+                    loss=epoch_loss,
+                    train_auc=current_train_auc,
+                    test_auc=current_test_auc
+                )
+                
+        # If we complete all epochs and early stopping was used, restore best model
+        if use_early_stopping and best_epoch < epoch:
+            if verbose:
+                print(f"[MinimaxV2] Training completed. Restoring best model from epoch {best_epoch} with test AUC: {best_test_auc:.4f}")
+            self.model_pred.load_state_dict(best_model_states['pred'])
+            self.model_impu.load_state_dict(best_model_states['impu'])
+            self.model_prop.load_state_dict(best_model_states['prop'])
+            self.model_abc.load_state_dict(best_model_states['abc'])
+            
+        return epoch
+    
+    def predict(self, x):
+        x_tensor = torch.LongTensor(x).to(self.device)
+        pred = self.model_pred.predict(x_tensor)
+        return pred.detach().cpu().numpy()
 
 
 def ECELoss(scores, labels, n_bins=15):
@@ -2446,4 +2916,914 @@ class MF_DRv2_BMSE(nn.Module):
     def _compute_IPS(self, x, *args, **kwargs):
         """No separate IPS computation - joint training instead"""
         pass
+    
+
+
+# ============================================================================
+# Enhanced Models for MF_MinimaxV3
+# ============================================================================
+
+class MF_Enhanced(nn.Module):
+    """Enhanced Matrix Factorization with BatchNorm, Dropout, and Bias terms"""
+    
+    def __init__(self, num_users, num_items, batch_size, embedding_k=4, dropout_rate=0.2, *args, **kwargs):
+        super().__init__()
+        self.num_users = num_users
+        self.num_items = num_items
+        self.embedding_k = embedding_k
+        self.batch_size = batch_size
+        self.dropout_rate = dropout_rate
+        
+        # User and item embeddings with better initialization
+        self.W = nn.Embedding(self.num_users, self.embedding_k)
+        self.H = nn.Embedding(self.num_items, self.embedding_k)
+        nn.init.xavier_uniform_(self.W.weight)
+        nn.init.xavier_uniform_(self.H.weight)
+        
+        # Bias terms
+        self.user_bias = nn.Embedding(self.num_users, 1)
+        self.item_bias = nn.Embedding(self.num_items, 1)
+        self.global_bias = nn.Parameter(torch.zeros(1))
+        nn.init.zeros_(self.user_bias.weight)
+        nn.init.zeros_(self.item_bias.weight)
+        
+        # Batch normalization (use 1D for embeddings)
+        self.bn_user = nn.BatchNorm1d(self.embedding_k)
+        self.bn_item = nn.BatchNorm1d(self.embedding_k)
+        
+        # Dropout
+        self.dropout = nn.Dropout(dropout_rate)
+        
+        self.sigmoid = nn.Sigmoid()
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        
+    def forward(self, x, is_training=False):
+        # Handle both numpy arrays and tensors
+        if isinstance(x, np.ndarray):
+            user_idx = torch.LongTensor(x[:, 0]).to(self.device)
+            item_idx = torch.LongTensor(x[:, 1]).to(self.device)
+        else:  # x is already a tensor
+            user_idx = x[:, 0].long().to(self.device)
+            item_idx = x[:, 1].long().to(self.device)
+        
+        # Get embeddings
+        U_emb = self.W(user_idx)
+        V_emb = self.H(item_idx)
+        
+        # Apply batch normalization (only during training)
+        if self.training and U_emb.size(0) > 1:  # Batch norm needs batch_size > 1
+            U_emb = self.bn_user(U_emb)
+            V_emb = self.bn_item(V_emb)
+        
+        # Apply dropout
+        U_emb = self.dropout(U_emb)
+        V_emb = self.dropout(V_emb)
+        
+        # Get biases
+        u_bias = self.user_bias(user_idx)
+        i_bias = self.item_bias(item_idx)
+        
+        # Compute prediction: dot product + biases
+        out = torch.sum(torch.mul(U_emb, V_emb), 1, keepdim=True) + u_bias + i_bias + self.global_bias
+        #out = torch.sum(torch.mul(U_emb, V_emb), 1, keepdim=True)
+        
+        if is_training:
+            return torch.squeeze(self.sigmoid(out)), U_emb, V_emb
+        else:
+            return torch.squeeze(self.sigmoid(out))
+    
+    def predict(self, x):
+        self.eval()  # Set to evaluation mode
+        with torch.no_grad():
+            pred = self.forward(x)
+        self.train()  # Back to training mode
+        return pred.detach().cpu()
+
+
+class MLP_Enhanced(nn.Module):
+    """Enhanced MLP for discriminator with deeper architecture"""
+    
+    def __init__(self, num_users, num_items, embedding_k=4, hidden_dims=[64, 32], dropout_rate=0.2, *args, **kwargs):
+        super().__init__()
+        self.num_users = num_users
+        self.num_items = num_items
+        self.embedding_k = embedding_k
+        self.dropout_rate = dropout_rate
+        
+        # Embeddings with initialization
+        self.W = nn.Embedding(self.num_users, self.embedding_k)
+        self.H = nn.Embedding(self.num_items, self.embedding_k)
+        nn.init.xavier_uniform_(self.W.weight)
+        nn.init.xavier_uniform_(self.H.weight)
+        
+        # Build MLP layers
+        layers = []
+        in_dim = embedding_k * 2
+        
+        for i, hidden_dim in enumerate(hidden_dims):
+            layers.append(nn.Linear(in_dim, hidden_dim))
+            layers.append(nn.BatchNorm1d(hidden_dim))
+            layers.append(nn.ReLU())
+            layers.append(nn.Dropout(dropout_rate))
+            in_dim = hidden_dim
+        
+        # Final layer
+        layers.append(nn.Linear(in_dim, 1))
+        
+        self.mlp = nn.Sequential(*layers)
+        self.sigmoid = nn.Sigmoid()
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        
+    def forward(self, x):
+        # Handle both numpy arrays and tensors
+        if isinstance(x, np.ndarray):
+            user_idx = torch.LongTensor(x[:, 0]).to(self.device)
+            item_idx = torch.LongTensor(x[:, 1]).to(self.device)
+        else:  # x is already a tensor
+            user_idx = x[:, 0].long().to(self.device)
+            item_idx = x[:, 1].long().to(self.device)
+        
+        U_emb = self.W(user_idx)
+        V_emb = self.H(item_idx)
+        
+        # Concatenate embeddings
+        z_emb = torch.cat([U_emb, V_emb], dim=1)
+        
+        # Pass through MLP
+        out = self.mlp(z_emb)
+        
+        return torch.squeeze(self.sigmoid(out))
+    
+    def predict(self, x):
+        self.eval()
+        with torch.no_grad():
+            pred = self.forward(x)
+        self.train()
+        return pred.detach().cpu()
+
+
+class MF_MinimaxV3(nn.Module):
+    """
+    MF_MinimaxV3: Enhanced version with architecture improvements and better training
+    """
+    def __init__(self, num_users, num_items, batch_size, batch_size_prop, 
+                 embedding_k=4, embedding_k1=8, dropout_rate=0.2,
+                 abc_model_name='mlp_enhanced', copy_model_pred=1, *args, **kwargs):
+        super().__init__()
+        self.num_users = num_users
+        self.num_items = num_items
+        self.embedding_k = embedding_k
+        self.embedding_k1 = embedding_k1
+        self.batch_size = batch_size
+        self.batch_size_prop = batch_size_prop
+        self.dropout_rate = dropout_rate
+        
+        # Use enhanced MF for prediction and imputation
+        self.model_pred = MF_Enhanced(self.num_users, self.num_items, self.batch_size, 
+                                      embedding_k=self.embedding_k1, dropout_rate=dropout_rate)
+        self.model_impu = MF_Enhanced(self.num_users, self.num_items, self.batch_size, 
+                                      embedding_k=self.embedding_k1, dropout_rate=dropout_rate)
+        
+        # Use standard logistic regression for propensity (keep it simple)
+        self.model_prop = logistic_regression(self.num_users, self.num_items, embedding_k=self.embedding_k)
+        
+        # Use enhanced MLP or standard logistic regression for discriminator
+        if abc_model_name == 'mlp_enhanced':
+            self.model_abc = MLP_Enhanced(self.num_users, self.num_items, 
+                                          embedding_k=self.embedding_k, dropout_rate=dropout_rate)
+        elif abc_model_name == 'mlp':
+            self.model_abc = mlp(self.num_users, self.num_items, embedding_k=self.embedding_k)
+        else:
+            self.model_abc = logistic_regression(self.num_users, self.num_items, embedding_k=self.embedding_k)
+        
+        # Copy model weights if specified
+        if copy_model_pred == 1:
+            self.model_impu.load_state_dict(self.model_pred.state_dict())
+        
+        # Move to cuda if available
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.model_pred.to(self.device)
+        self.model_impu.to(self.device)
+        self.model_prop.to(self.device)
+        self.model_abc.to(self.device)
+        
+        self.sigmoid = torch.nn.Sigmoid()
+        self.xent_func = torch.nn.BCELoss()
+    
+    def _compute_IPS(self, x, num_epoch=500, lr=0.05, lamb=1e-5, tol=1e-4, verbose=False):
+        """Pre-train propensity model with extended epochs"""
+        print('Stage1: computing_IPS (V3 with extended training)', lr, lamb)
+        
+        # Generate obs from x
+        obs = sps.csr_matrix((np.ones(x.shape[0]), (x[:, 0], x[:, 1])), 
+                            shape=(self.num_users, self.num_items), dtype=np.float32).toarray().reshape(-1)
+        
+        optimizer_propensity = torch.optim.Adam(self.model_prop.parameters(), lr=lr, weight_decay=lamb)
+        # Add learning rate scheduler for propensity
+        scheduler_prop = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer_propensity, mode='min', 
+                                                                    factor=0.5, patience=30)
+        
+        num_samples = len(obs)
+        total_batch = num_samples // self.batch_size_prop
+        x_all = generate_total_sample(self.num_users, self.num_items)
+        
+        last_loss = 1e9
+        early_stop = 0
+        
+        for epoch in tqdm(range(num_epoch), desc='Stage1: computing_IPS'):
+            # Sampling all samples
+            ul_idxs = np.arange(x_all.shape[0])
+            np.random.shuffle(ul_idxs)
+            
+            epoch_loss = 0
+            
+            for idx in range(total_batch):
+                # Mini-batch training
+                x_all_idx = ul_idxs[idx * self.batch_size_prop : (idx+1) * self.batch_size_prop]
+                x_sampled = x_all[x_all_idx]
+                
+                # Propensity prediction
+                prop = self.model_prop.forward(x_sampled)
+                
+                # Get observed labels
+                sub_obs = obs[x_all_idx]
+                sub_obs = torch.Tensor(sub_obs).to(self.device)
+                
+                # MSE loss for propensity
+                prop_loss = nn.MSELoss()(prop, sub_obs)
+                
+                optimizer_propensity.zero_grad()
+                prop_loss.backward()
+                # Gradient clipping
+                torch.nn.utils.clip_grad_norm_(self.model_prop.parameters(), max_norm=1.0)
+                optimizer_propensity.step()
+                
+                epoch_loss += prop_loss.detach().cpu().numpy()
+            
+            # Learning rate scheduling
+            scheduler_prop.step(epoch_loss)
+            
+            relative_loss_div = (last_loss - epoch_loss) / (last_loss + 1e-10)
+            if relative_loss_div < tol:
+                if early_stop > 10:  # Increased early stop patience
+                    if verbose:
+                        print('[Stage1] Early stop at epoch {}, loss: {}'.format(epoch, epoch_loss))
+                    break
+                else:
+                    early_stop += 1
+            else:
+                early_stop = 0
+                
+            last_loss = epoch_loss
+            
+            if epoch % 50 == 0 and verbose:
+                print('[Stage1] epoch: {}, loss: {}'.format(epoch, epoch_loss))
+    
+    def fit(self, x, y, x_test=None, y_test=None, G=4, alpha=1, beta=1, theta=1, num_epoch=1000, 
+            pred_lr=0.05, impu_lr=0.05, prop_lr=0.05, dis_lr=0.05,
+            lamb_prop=0, lamb_pred=0, lamb_imp=0, dis_lamb=0, gamma=0.05, num_bins=10,
+            tol=1e-4, verbose=True, early_stop_patience=30, early_stop_min_delta=1e-4, 
+            eval_freq=5, progress_callback=None, grad_clip_norm=1.0):
+        """
+        Enhanced training with learning rate scheduling and gradient clipping
+        """
+        
+        print('Stage2: fitting (V3 with enhanced training)', G, alpha, beta, theta, gamma, num_bins, 
+              pred_lr, impu_lr, prop_lr, dis_lr, lamb_prop, lamb_pred, lamb_imp, dis_lamb)
+        
+        # Create optimizers
+        optimizer_prediction = torch.optim.Adam(self.model_pred.parameters(), lr=pred_lr, weight_decay=lamb_pred)
+        optimizer_imputation = torch.optim.Adam(self.model_impu.parameters(), lr=impu_lr, weight_decay=lamb_imp)
+        optimizer_propensity = torch.optim.Adam(self.model_prop.parameters(), lr=prop_lr, weight_decay=lamb_prop)
+        optimizer_dis = torch.optim.Adam(self.model_abc.parameters(), lr=dis_lr, weight_decay=dis_lamb)
+        
+        # Learning rate schedulers
+        scheduler_pred = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_prediction, T_max=num_epoch, eta_min=pred_lr*0.1)
+        scheduler_impu = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_imputation, T_max=num_epoch, eta_min=impu_lr*0.1)
+        scheduler_prop = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_propensity, T_max=num_epoch, eta_min=prop_lr*0.1)
+        scheduler_dis = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_dis, T_max=num_epoch, eta_min=dis_lr*0.1)
+        
+        # Generate all samples and obs
+        x_all = generate_total_sample(self.num_users, self.num_items)
+        obs = sps.csr_matrix((np.ones(len(y)), (x[:, 0], x[:, 1])), 
+                            shape=(self.num_users, self.num_items), dtype=np.float32).toarray().reshape(-1)
+        
+        num_samples = len(x)
+        total_batch = num_samples // self.batch_size
+        
+        last_loss = 1e9
+        early_stop = 0
+        stop = 5  # Default stop value
+        
+        # Use adaptive binning like original MF_Minimax
+        bin_edges = torch.linspace(0, 1, steps=int(num_bins) + 1, device=self.device)[1:-1]
+        print('bin_edges (V3)', bin_edges)
+        
+        # Initialize early stopping variables
+        use_early_stopping = x_test is not None and y_test is not None
+        if use_early_stopping:
+            from sklearn.metrics import roc_auc_score
+            best_test_auc = -float('inf')
+            patience_counter = 0
+            best_epoch = 0
+            # Save initial model states
+            best_model_states = {
+                'pred': copy.deepcopy(self.model_pred.state_dict()),
+                'impu': copy.deepcopy(self.model_impu.state_dict()),
+                'prop': copy.deepcopy(self.model_prop.state_dict()),
+                'abc': copy.deepcopy(self.model_abc.state_dict())
+            }
+            if verbose:
+                print("Early stopping enabled with patience =", early_stop_patience)
+        
+        # Training loop
+        for epoch in tqdm(range(num_epoch), desc='Stage2: fitting'):
+            # Set models to training mode
+            self.model_pred.train()
+            self.model_impu.train()
+            self.model_prop.train()
+            self.model_abc.train()
+            
+            # Shuffle data
+            all_idx = np.arange(num_samples)
+            np.random.shuffle(all_idx)
+            ul_idxs = np.arange(x_all.shape[0])
+            np.random.shuffle(ul_idxs)
+            
+            epoch_loss = 0
+            
+            for idx in range(total_batch):
+                # Get batch data
+                batch_idx = all_idx[idx * self.batch_size : (idx + 1) * self.batch_size]
+                batch_x = x[batch_idx]
+                batch_y = y[batch_idx]
+                batch_y_tensor = torch.Tensor(batch_y).to(self.device)
+                
+                # Get counterfactual samples for propensity/discriminator training
+                x_sampled = x_all[ul_idxs[G * idx * self.batch_size : G * (idx + 1) * self.batch_size]]
+                x_sampled_tensor = torch.LongTensor(x_sampled).to(self.device)
+                obs_sampled = torch.Tensor(obs[ul_idxs[G * idx * self.batch_size : G * (idx + 1) * self.batch_size]]).to(self.device)
+                
+                # Propensity model on counterfactual samples
+                prop_sampled = self.model_prop(x_sampled_tensor)
+                with torch.no_grad():
+                    prop_user_emb, prop_item_emb = self.model_prop.get_emb(x_sampled_tensor)
+                
+                # Use equal frequency binning (adaptive binning)
+                bin_indices, full_boundaries = equal_frequency_binning(prop_sampled.detach(), bin_edges, n_bins=num_bins)
+                bin_indices = torch.clamp(bin_indices, 0, num_bins - 1)
+                bin_sum_index = torch.nn.functional.one_hot(bin_indices.long(), num_classes=int(num_bins)).float()
+                
+                # Discriminator training
+                prop_error_dis = self.model_abc(prop_user_emb.detach(), prop_item_emb.detach()) * (obs_sampled - prop_sampled.detach())
+                bin_prop_error_dis = torch.matmul(prop_error_dis.unsqueeze(0), bin_sum_index).squeeze(0)
+                prop_abc_loss_dis = - bin_prop_error_dis.abs().sum() / float(num_samples)
+                
+                optimizer_dis.zero_grad()
+                prop_abc_loss_dis.backward()
+                torch.nn.utils.clip_grad_norm_(self.model_abc.parameters(), max_norm=grad_clip_norm)
+                optimizer_dis.step()
+                
+                # Propensity training
+                prop_error_prop = self.model_abc.predict(prop_user_emb.detach(), prop_item_emb.detach()).detach() * (obs_sampled - prop_sampled)
+                bin_prop_error_prop = torch.matmul(prop_error_prop.unsqueeze(0), bin_sum_index).squeeze(0)
+                prop_abc_loss_prop = bin_prop_error_prop.abs().sum() / float(num_samples)
+                prop_nll_loss = F.binary_cross_entropy(prop_sampled, obs_sampled, reduction='mean')
+                prop_loss = prop_nll_loss + beta * prop_abc_loss_prop
+                
+                optimizer_propensity.zero_grad()
+                prop_loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model_prop.parameters(), max_norm=grad_clip_norm)
+                optimizer_propensity.step()
+                
+                # Now train prediction and imputation models on observed samples
+                # Predictions
+                pred, _, _ = self.model_pred.forward(batch_x, is_training=True)
+                imputation, _, _ = self.model_impu.forward(batch_x, is_training=True)
+                
+                # Get inverse propensity weights for observed samples
+                inv_prop = 1.0 / torch.clip(self.model_prop.predict(torch.LongTensor(batch_x).to(self.device)), gamma, 1.0)
+                
+                # Get predictions for counterfactual samples
+                pred_ul, _, _ = self.model_pred.forward(x_sampled, is_training=True)
+                imputation_ul, _, _ = self.model_impu.forward(x_sampled, is_training=True)
+                
+                # Compute DR losses for prediction model
+                xent_loss = F.binary_cross_entropy(pred, batch_y_tensor, weight=inv_prop.detach(), reduction='sum')
+                imputation_loss = F.binary_cross_entropy(pred, imputation.detach(), reduction='sum')
+                ips_loss = (xent_loss - imputation_loss)  # batch size
+                direct_loss = F.binary_cross_entropy(pred_ul, imputation_ul.detach(), reduction='sum')
+                dr_loss = (ips_loss + direct_loss) / float(x_sampled.shape[0])
+                
+                optimizer_prediction.zero_grad()
+                dr_loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model_pred.parameters(), max_norm=grad_clip_norm)
+                optimizer_prediction.step()
+                
+                # Train imputation model
+                pred_detached = self.model_pred.predict(torch.LongTensor(batch_x).to(self.device))
+                imputation_y = self.model_impu(torch.LongTensor(batch_x).to(self.device))
+                
+                # Ensure pred_detached is on the same device
+                pred_detached = pred_detached.to(self.device)
+                
+                e_loss = F.binary_cross_entropy(pred_detached.detach(), batch_y_tensor, reduction='none')
+                e_hat_loss = F.binary_cross_entropy(imputation_y, pred_detached.detach(), reduction='none')
+                
+                imp_loss = torch.sum(((e_loss - e_hat_loss) ** 2) * inv_prop.detach()) / float(x_sampled.shape[0])
+                
+                optimizer_imputation.zero_grad()
+                imp_loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model_impu.parameters(), max_norm=grad_clip_norm)
+                optimizer_imputation.step()
+                
+                epoch_loss += xent_loss.detach().cpu().numpy()
+            
+            # Learning rate scheduling
+            scheduler_pred.step()
+            scheduler_impu.step()
+            scheduler_prop.step()
+            scheduler_dis.step()
+            
+            # Evaluation and early stopping
+            if use_early_stopping and epoch % eval_freq == 0:
+                self.model_pred.eval()
+                self.model_impu.eval()
+                with torch.no_grad():
+                    # Compute test AUC
+                    test_pred = self.predict(x_test)
+                    test_auc = roc_auc_score(y_test, test_pred)
+                    
+                    # Compute train AUC on a sample
+                    train_sample_size = min(10000, len(x))
+                    train_idx = np.random.choice(len(x), train_sample_size, replace=False)
+                    train_pred = self.predict(x[train_idx])
+                    train_auc = roc_auc_score(y[train_idx], train_pred)
+                
+                # Progress callback
+                if progress_callback:
+                    progress_callback(epoch, num_epoch, epoch_loss, train_auc, test_auc)
+                
+                # Check for improvement
+                if test_auc > best_test_auc + early_stop_min_delta:
+                    best_test_auc = test_auc
+                    patience_counter = 0
+                    best_epoch = epoch
+                    # Save best model states
+                    best_model_states = {
+                        'pred': copy.deepcopy(self.model_pred.state_dict()),
+                        'impu': copy.deepcopy(self.model_impu.state_dict()),
+                        'prop': copy.deepcopy(self.model_prop.state_dict()),
+                        'abc': copy.deepcopy(self.model_abc.state_dict())
+                    }
+                    if verbose:
+                        print(f'\n[Early Stop] New best test AUC: {test_auc:.6f} at epoch {epoch}')
+                else:
+                    patience_counter += 1
+                
+                # # Check overfitting
+                # if train_auc - test_auc > 0.15:
+                #     if verbose:
+                #         print(f'\n[Early Stop] Severe overfitting detected: train_auc={train_auc:.4f}, test_auc={test_auc:.4f}')
+                #     break
+                
+                # Check patience
+                if patience_counter >= early_stop_patience:
+                    if verbose:
+                        print(f'\n[Early Stop] Patience exhausted. Best test AUC: {best_test_auc:.6f} at epoch {best_epoch}')
+                    # Restore best model
+                    self.model_pred.load_state_dict(best_model_states['pred'])
+                    self.model_impu.load_state_dict(best_model_states['impu'])
+                    self.model_prop.load_state_dict(best_model_states['prop'])
+                    self.model_abc.load_state_dict(best_model_states['abc'])
+                    break
+            
+            # Regular convergence check
+            relative_loss_div = (last_loss - epoch_loss) / (last_loss + 1e-10)
+            if relative_loss_div < tol:
+                if early_stop > stop:
+                    if verbose:
+                        print('[Training] Early stop at epoch {}, loss: {}'.format(epoch, epoch_loss))
+                    break
+                else:
+                    early_stop += 1
+            else:
+                early_stop = 0
+            
+            last_loss = epoch_loss
+            
+            if verbose and epoch % 50 == 0:
+                print('[Training] epoch: {}, loss: {:.4f}'.format(epoch, epoch_loss))
+                if use_early_stopping:
+                    print(f'[Training] Current LRs - pred: {scheduler_pred.get_last_lr()[0]:.6f}, ' + 
+                          f'impu: {scheduler_impu.get_last_lr()[0]:.6f}, ' +
+                          f'prop: {scheduler_prop.get_last_lr()[0]:.6f}, ' +
+                          f'dis: {scheduler_dis.get_last_lr()[0]:.6f}')
+        
+        if use_early_stopping and verbose:
+            print(f'\nTraining completed. Best test AUC: {best_test_auc:.6f} achieved at epoch {best_epoch}')
+    
+    def predict(self, x):
+        self.model_pred.eval()
+        with torch.no_grad():
+            x_tensor = torch.LongTensor(x).to(self.device)
+            pred = self.model_pred.predict(x_tensor)
+        self.model_pred.train()
+        return pred.detach().cpu().numpy()
+
+
+class MF_MinimaxV4(nn.Module):
+    """
+    MF_MinimaxV4: Uses standard models (like V1) with V3's training improvements
+    - Standard MF for prediction/imputation (no BatchNorm/Dropout)
+    - Standard logistic_regression or mlp for discriminator
+    - Keeps V3's training enhancements: LR scheduling, gradient clipping, better early stopping
+    """
+    def __init__(self, num_users, num_items, batch_size, batch_size_prop, 
+                 embedding_k=4, embedding_k1=8,
+                 abc_model_name='logistic_regression', copy_model_pred=1, *args, **kwargs):
+        super().__init__()
+        self.num_users = num_users
+        self.num_items = num_items
+        self.embedding_k = embedding_k
+        self.embedding_k1 = embedding_k1
+        self.batch_size = batch_size
+        self.batch_size_prop = batch_size_prop
+        
+        # Use standard MF for prediction and imputation (like V1)
+        self.model_pred = MF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1)
+        self.model_impu = MF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1)
+        
+        # Use standard logistic regression for propensity
+        self.model_prop = logistic_regression(self.num_users, self.num_items, embedding_k=self.embedding_k)
+        
+        # Use standard logistic_regression or mlp for discriminator (like V1)
+        if abc_model_name == 'logistic_regression':
+            self.model_abc = logistic_regression(self.num_users, self.num_items, embedding_k=self.embedding_k)
+        elif abc_model_name == 'mlp':
+            self.model_abc = mlp(self.num_users, self.num_items, embedding_k=self.embedding_k)
+        else:
+            # Default to logistic regression if unknown
+            self.model_abc = logistic_regression(self.num_users, self.num_items, embedding_k=self.embedding_k)
+        
+        # Copy model weights if specified
+        if copy_model_pred == 1:
+            self.model_impu.load_state_dict(self.model_pred.state_dict())
+        
+        # Move to cuda if available
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.model_pred.to(self.device)
+        self.model_impu.to(self.device)
+        self.model_prop.to(self.device)
+        self.model_abc.to(self.device)
+        
+        self.sigmoid = torch.nn.Sigmoid()
+        self.xent_func = torch.nn.BCELoss()
+    
+    def _compute_IPS(self, x, num_epoch=500, lr=0.05, lamb=1e-5, tol=1e-4, verbose=False):
+        """Pre-train propensity model with extended epochs (from V3)"""
+        print('Stage1: computing_IPS (V4 with V3 training)', lr, lamb)
+        
+        # Generate obs from x
+        obs = sps.csr_matrix((np.ones(x.shape[0]), (x[:, 0], x[:, 1])), 
+                            shape=(self.num_users, self.num_items), dtype=np.float32).toarray().reshape(-1)
+        
+        optimizer_propensity = torch.optim.Adam(self.model_prop.parameters(), lr=lr, weight_decay=lamb)
+        # Add learning rate scheduler for propensity (from V3)
+        scheduler_prop = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer_propensity, mode='min', 
+                                                                    factor=0.5, patience=30)
+        
+        num_samples = len(obs)
+        total_batch = num_samples // self.batch_size_prop
+        x_all = generate_total_sample(self.num_users, self.num_items)
+        
+        last_loss = 1e9
+        early_stop = 0
+        
+        for epoch in tqdm(range(num_epoch), desc='Stage1: computing_IPS'):
+            # Sampling all samples
+            ul_idxs = np.arange(x_all.shape[0])
+            np.random.shuffle(ul_idxs)
+            
+            epoch_loss = 0
+            
+            for idx in range(total_batch):
+                # Mini-batch training
+                x_all_idx = ul_idxs[idx * self.batch_size_prop : (idx+1) * self.batch_size_prop]
+                x_sampled = x_all[x_all_idx]
+                
+                # Propensity prediction - use standard forward (no is_training parameter)
+                prop = self.model_prop(torch.LongTensor(x_sampled).to(self.device))
+                
+                # Get observed labels
+                sub_obs = obs[x_all_idx]
+                sub_obs = torch.Tensor(sub_obs).to(self.device)
+                
+                # MSE loss for propensity
+                prop_loss = F.mse_loss(prop, sub_obs)
+                
+                optimizer_propensity.zero_grad()
+                prop_loss.backward()
+                # Gradient clipping (from V3)
+                torch.nn.utils.clip_grad_norm_(self.model_prop.parameters(), max_norm=1.0)
+                optimizer_propensity.step()
+                
+                epoch_loss += prop_loss.detach().cpu().numpy()
+            
+            # Learning rate scheduling (from V3)
+            scheduler_prop.step(epoch_loss)
+            
+            relative_loss_div = (last_loss - epoch_loss) / (last_loss + 1e-10)
+            if relative_loss_div < tol:
+                if early_stop > 10:  # Increased early stop patience (from V3)
+                    if verbose:
+                        print('[Stage1] Early stop at epoch {}, loss: {}'.format(epoch, epoch_loss))
+                    break
+                else:
+                    early_stop += 1
+            else:
+                early_stop = 0
+                
+            last_loss = epoch_loss
+            
+            if epoch % 50 == 0 and verbose:
+                print('[Stage1] epoch: {}, loss: {}'.format(epoch, epoch_loss))
+    
+    def fit(self, x, y, x_test=None, y_test=None, G=4, alpha=1, beta=1, theta=1, num_epoch=1000, 
+            pred_lr=0.05, impu_lr=0.05, prop_lr=0.05, dis_lr=0.05,
+            lamb_prop=0, lamb_pred=0, lamb_imp=0, dis_lamb=0, gamma=0.05, num_bins=10,
+            tol=1e-4, verbose=True, early_stop_patience=30, early_stop_min_delta=1e-4, 
+            eval_freq=5, progress_callback=None, grad_clip_norm=1.0):
+        """
+        Training with V3's enhancements but using standard models
+        """
+        
+        print('Stage2: fitting (V4 with standard models + V3 training)', G, alpha, beta, theta, gamma, num_bins, 
+              pred_lr, impu_lr, prop_lr, dis_lr, lamb_prop, lamb_pred, lamb_imp, dis_lamb)
+        
+        # Create optimizers
+        optimizer_prediction = torch.optim.Adam(self.model_pred.parameters(), lr=pred_lr, weight_decay=lamb_pred)
+        optimizer_imputation = torch.optim.Adam(self.model_impu.parameters(), lr=impu_lr, weight_decay=lamb_imp)
+        optimizer_propensity = torch.optim.Adam(self.model_prop.parameters(), lr=prop_lr, weight_decay=lamb_prop)
+        optimizer_dis = torch.optim.Adam(self.model_abc.parameters(), lr=dis_lr, weight_decay=dis_lamb)
+        
+        # Learning rate schedulers (from V3)
+        scheduler_pred = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_prediction, T_max=num_epoch, eta_min=pred_lr*0.1)
+        scheduler_impu = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_imputation, T_max=num_epoch, eta_min=impu_lr*0.1)
+        scheduler_prop = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_propensity, T_max=num_epoch, eta_min=prop_lr*0.1)
+        scheduler_dis = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_dis, T_max=num_epoch, eta_min=dis_lr*0.1)
+        
+        # Generate all samples and obs
+        x_all = generate_total_sample(self.num_users, self.num_items)
+        obs = sps.csr_matrix((np.ones(len(y)), (x[:, 0], x[:, 1])), 
+                            shape=(self.num_users, self.num_items), dtype=np.float32).toarray().reshape(-1)
+        
+        num_samples = len(x)
+        total_batch = num_samples // self.batch_size
+        
+        last_loss = 1e9
+        early_stop = 0
+        stop = 5  # Default stop value
+        
+        # Use adaptive binning like original MF_Minimax
+        bin_edges = torch.linspace(0, 1, steps=int(num_bins) + 1, device=self.device)[1:-1]
+        print('bin_edges (V4)', bin_edges)
+        
+        # Initialize early stopping variables
+        use_early_stopping = x_test is not None and y_test is not None
+        if use_early_stopping:
+            from sklearn.metrics import roc_auc_score
+            best_test_auc = -float('inf')
+            patience_counter = 0
+            best_epoch = 0
+            # Save initial model states (use copy.deepcopy from V3)
+            best_model_states = {
+                'pred': copy.deepcopy(self.model_pred.state_dict()),
+                'impu': copy.deepcopy(self.model_impu.state_dict()),
+                'prop': copy.deepcopy(self.model_prop.state_dict()),
+                'abc': copy.deepcopy(self.model_abc.state_dict())
+            }
+            if verbose:
+                print("Early stopping enabled with patience =", early_stop_patience)
+        
+        # Training loop
+        for epoch in tqdm(range(num_epoch), desc='Stage2: fitting'):
+            # Shuffle data
+            all_idx = np.arange(num_samples)
+            np.random.shuffle(all_idx)
+            ul_idxs = np.arange(x_all.shape[0])
+            np.random.shuffle(ul_idxs)
+            
+            epoch_loss = 0
+            
+            for idx in range(total_batch):
+                # Get batch data
+                selected_idx = all_idx[idx * self.batch_size : (idx + 1) * self.batch_size]
+                sub_x = x[selected_idx]
+                sub_y = y[selected_idx]
+                sub_x_tensor = torch.LongTensor(sub_x).to(self.device)
+                sub_y_tensor = torch.Tensor(sub_y).to(self.device)
+                
+                # Add bounds checking (from V3)
+                start_idx = G * idx * self.batch_size
+                end_idx = min(G * (idx + 1) * self.batch_size, len(ul_idxs))
+                
+                if start_idx >= len(ul_idxs):
+                    break  # No more samples available
+                    
+                x_all_idx = ul_idxs[start_idx:end_idx]
+                
+                if len(x_all_idx) == 0:
+                    continue  # Skip empty batches
+                
+                x_sampled = x_all[x_all_idx]
+                x_sampled_tensor = torch.LongTensor(x_sampled).to(self.device)
+                obs_sampled = torch.Tensor(obs[x_all_idx]).to(self.device)
+                
+                # Propensity model on counterfactual samples
+                prop_sampled = self.model_prop(x_sampled_tensor)
+                with torch.no_grad():
+                    prop_user_emb, prop_item_emb = self.model_prop.get_emb(x_sampled_tensor)
+                
+                # Use equal frequency binning (adaptive binning)
+                bin_indices, full_boundaries = equal_frequency_binning(prop_sampled.detach(), bin_edges, n_bins=num_bins)
+                bin_indices = torch.clamp(bin_indices, 0, num_bins - 1)
+                bin_sum_index = torch.nn.functional.one_hot(bin_indices.long(), num_classes=int(num_bins)).float()
+                
+                # Discriminator training
+                prop_error_dis = self.model_abc(prop_user_emb.detach(), prop_item_emb.detach()) * (obs_sampled - prop_sampled.detach())
+                bin_prop_error_dis = torch.matmul(prop_error_dis.unsqueeze(0), bin_sum_index).squeeze(0)
+                prop_abc_loss_dis = - bin_prop_error_dis.abs().sum() / float(num_samples)
+                
+                optimizer_dis.zero_grad()
+                prop_abc_loss_dis.backward()
+                torch.nn.utils.clip_grad_norm_(self.model_abc.parameters(), max_norm=grad_clip_norm)
+                optimizer_dis.step()
+                
+                # Propensity training
+                prop_error_prop = self.model_abc.predict(prop_user_emb.detach(), prop_item_emb.detach()).detach() * (obs_sampled - prop_sampled)
+                bin_prop_error_prop = torch.matmul(prop_error_prop.unsqueeze(0), bin_sum_index).squeeze(0)
+                prop_abc_loss_prop = bin_prop_error_prop.abs().sum() / float(num_samples)
+                prop_nll_loss = F.binary_cross_entropy(prop_sampled, obs_sampled, reduction='mean')
+                prop_loss = prop_nll_loss + beta * prop_abc_loss_prop
+                
+                optimizer_propensity.zero_grad()
+                prop_loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model_prop.parameters(), max_norm=grad_clip_norm)
+                optimizer_propensity.step()
+                
+                # Now train prediction and imputation models on observed samples
+                # Use standard forward calls (no is_training parameter)
+                pred = self.model_pred(sub_x_tensor)
+                imputation_y = self.model_impu.predict(sub_x_tensor)
+                
+                # Get inverse propensity weights for observed samples
+                inv_prop = 1.0 / torch.clip(self.model_prop.predict(sub_x_tensor), gamma, 1.0)
+                
+                # Get predictions for counterfactual samples
+                pred_u = self.model_pred(x_sampled_tensor)
+                imputation_y1 = self.model_impu.predict(x_sampled_tensor)
+                
+                # Compute DR losses for prediction model (same as V1)
+                xent_loss = F.binary_cross_entropy(pred, sub_y_tensor, weight=inv_prop.detach(), reduction='sum')
+                imputation_loss = F.binary_cross_entropy(pred, imputation_y.detach(), reduction='sum')
+                ips_loss = (xent_loss - imputation_loss)  # batch size
+                direct_loss = F.binary_cross_entropy(pred_u, imputation_y1.detach(), reduction='sum')
+                dr_loss = (ips_loss + direct_loss) / float(x_sampled.shape[0])
+                
+                optimizer_prediction.zero_grad()
+                dr_loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model_pred.parameters(), max_norm=grad_clip_norm)
+                optimizer_prediction.step()
+                
+                # Train imputation model (same as V1)
+                pred = self.model_pred.predict(sub_x_tensor)
+                imputation_y = self.model_impu(sub_x_tensor)
+                
+                e_loss = F.binary_cross_entropy(pred.detach(), sub_y_tensor, reduction='none')
+                e_hat_loss = F.binary_cross_entropy(imputation_y, pred.detach(), reduction='none')
+                
+                imp_loss = torch.sum(((e_loss - e_hat_loss) ** 2) * inv_prop.detach()) / float(x_sampled.shape[0])
+                
+                optimizer_imputation.zero_grad()
+                imp_loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model_impu.parameters(), max_norm=grad_clip_norm)
+                optimizer_imputation.step()
+                
+                epoch_loss += xent_loss.detach().cpu().numpy()
+            
+            # Learning rate scheduling (from V3)
+            scheduler_pred.step()
+            scheduler_impu.step()
+            scheduler_prop.step()
+            scheduler_dis.step()
+            
+            # Variables to track for callback
+            current_train_auc = None
+            current_test_auc = None
+            
+            # Calculate train AUC periodically for callback
+            if progress_callback and (epoch + 1) % eval_freq == 0:
+                with torch.no_grad():
+                    train_pred = self.predict(x)
+                    current_train_auc = roc_auc_score(y, train_pred)
+            
+            # Evaluation and early stopping (enhanced from V3)
+            if use_early_stopping and (epoch + 1) % eval_freq == 0:
+                with torch.no_grad():
+                    # Compute test AUC
+                    test_pred = self.predict(x_test)
+                    test_auc = roc_auc_score(y_test, test_pred)
+                    current_test_auc = test_auc
+                    
+                    # Compute train AUC on a sample (from V3)
+                    if not current_train_auc:
+                        train_sample_size = min(10000, len(x))
+                        train_idx = np.random.choice(len(x), train_sample_size, replace=False)
+                        train_pred = self.predict(x[train_idx])
+                        train_auc = roc_auc_score(y[train_idx], train_pred)
+                    else:
+                        train_auc = current_train_auc
+                
+                # Check for improvement
+                if test_auc > best_test_auc + early_stop_min_delta:
+                    best_test_auc = test_auc
+                    patience_counter = 0
+                    best_epoch = epoch
+                    # Save best model states
+                    best_model_states = {
+                        'pred': copy.deepcopy(self.model_pred.state_dict()),
+                        'impu': copy.deepcopy(self.model_impu.state_dict()),
+                        'prop': copy.deepcopy(self.model_prop.state_dict()),
+                        'abc': copy.deepcopy(self.model_abc.state_dict())
+                    }
+                    if verbose:
+                        print(f'\n[Early Stop] New best test AUC: {test_auc:.6f} at epoch {epoch}')
+                else:
+                    patience_counter += 1
+                    if verbose:
+                        print(f"[Minimax V4] epoch:{epoch}, xent:{epoch_loss:.4f}, test_auc:{test_auc:.4f} (patience: {patience_counter}/{early_stop_patience})")
+                
+                # Check patience
+                if patience_counter >= early_stop_patience:
+                    if verbose:
+                        print(f'\n[Early Stop] Patience exhausted. Best test AUC: {best_test_auc:.6f} at epoch {best_epoch}')
+                    # Restore best model
+                    self.model_pred.load_state_dict(best_model_states['pred'])
+                    self.model_impu.load_state_dict(best_model_states['impu'])
+                    self.model_prop.load_state_dict(best_model_states['prop'])
+                    self.model_abc.load_state_dict(best_model_states['abc'])
+                    return best_epoch
+            
+            elif epoch % 10 == 0 and verbose:
+                print("[Minimax V4] epoch:{}, xent:{}".format(epoch, epoch_loss))
+            
+            # Call progress callback if provided
+            if progress_callback:
+                progress_callback(
+                    epoch=epoch,
+                    total_epochs=num_epoch,
+                    loss=epoch_loss,
+                    train_auc=current_train_auc,
+                    test_auc=current_test_auc
+                )
+            
+            # Regular convergence check
+            relative_loss_div = (last_loss - epoch_loss) / (last_loss + 1e-10)
+            if relative_loss_div < tol:
+                if early_stop > stop:
+                    if verbose:
+                        print('[Training] Early stop at epoch {}, loss: {}'.format(epoch, epoch_loss))
+                    return epoch
+                else:
+                    early_stop += 1
+            else:
+                early_stop = 0
+            
+            last_loss = epoch_loss
+            
+            if verbose and epoch % 50 == 0:
+                print('[Training] epoch: {}, loss: {:.4f}'.format(epoch, epoch_loss))
+                if use_early_stopping:
+                    print(f'[Training] Current LRs - pred: {scheduler_pred.get_last_lr()[0]:.6f}, ' + 
+                          f'impu: {scheduler_impu.get_last_lr()[0]:.6f}, ' +
+                          f'prop: {scheduler_prop.get_last_lr()[0]:.6f}, ' +
+                          f'dis: {scheduler_dis.get_last_lr()[0]:.6f}')
+        
+        # If we complete all epochs and early stopping was used, restore best model
+        if use_early_stopping and best_epoch < epoch:
+            if verbose:
+                print(f'\nTraining completed. Restoring best model from epoch {best_epoch} with test AUC: {best_test_auc:.6f}')
+            self.model_pred.load_state_dict(best_model_states['pred'])
+            self.model_impu.load_state_dict(best_model_states['impu'])
+            self.model_prop.load_state_dict(best_model_states['prop'])
+            self.model_abc.load_state_dict(best_model_states['abc'])
+        
+        return epoch
+    
+    def predict(self, x):
+        """Simple prediction without train/eval mode switching (standard models don't need it)"""
+        x_tensor = torch.LongTensor(x).to(self.device)
+        pred = self.model_pred.predict(x_tensor)
+        return pred.detach().cpu().numpy()
     
