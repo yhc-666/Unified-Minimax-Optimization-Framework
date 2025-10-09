@@ -45,7 +45,9 @@ HYPERPARAM_RANGES = {
         'G': [1, 2, 4, 6, 8, 10, 12],
         'num_bins': [5, 10, 15, 20],
         'batch_size': [128],
-        'abc_model_name': ['logistic_regression', 'mlp']
+        'abc_model_name': ['logistic_regression', 'mlp'],
+        'use_kl': [True, False],
+        'kl_beta': [0.1, 0.2, 0.5, 1.0]
     },
     'yahoo': {
         'embedding_k': [16, 32, 64],
@@ -63,7 +65,9 @@ HYPERPARAM_RANGES = {
         'G': [1, 2, 4, 6, 8, 10, 12],
         'num_bins': [5, 10, 15, 20],
         'batch_size': [4096],
-        'abc_model_name': ['logistic_regression', 'mlp']
+        'abc_model_name': ['logistic_regression', 'mlp'],
+        'use_kl': [True, False],
+        'kl_beta': [0.1, 0.2, 0.5, 1.0]
     },
     'kuai': {
         'embedding_k': [16, 32, 64],
@@ -81,7 +85,9 @@ HYPERPARAM_RANGES = {
         'G': [1, 2, 4, 6, 8, 10, 12],
         'num_bins': [5, 10, 15, 20, 25, 30, 40, 50, 50],
         'batch_size': [4096],
-        'abc_model_name': ['logistic_regression', 'mlp']
+        'abc_model_name': ['logistic_regression', 'mlp'],
+        'use_kl': [True, False],
+        'kl_beta': [0.1, 0.2, 0.5, 1.0]
     }
 }
 
@@ -244,7 +250,9 @@ def train_and_eval_with_params(dataset_name, train_args, model_args, seed=2020):
                          embedding_k1=model_args['embedding_k1'],
                          abc_model_name=model_args.get('abc_model_name', 'logistic_regression'),
                          copy_model_pred=model_args.get('copy_model_pred', 1),
-                         pred_model_name=model_args.get('pred_model_name', 'MF'))
+                         pred_model_name=model_args.get('pred_model_name', 'MF'),
+                         use_kl=model_args.get('use_kl', False),
+                         kl_beta=model_args.get('kl_beta', 0.2))
     else:
         mf = MF_Minimax(num_user, num_item,
                         batch_size=train_args['batch_size'],
@@ -253,7 +261,9 @@ def train_and_eval_with_params(dataset_name, train_args, model_args, seed=2020):
                         embedding_k1=model_args['embedding_k1'],
                         abc_model_name=model_args.get('abc_model_name', 'logistic_regression'),
                         copy_model_pred=model_args.get('copy_model_pred', 1),
-                        pred_model_name=model_args.get('pred_model_name', 'MF'))
+                        pred_model_name=model_args.get('pred_model_name', 'MF'),
+                        use_kl=model_args.get('use_kl', False),
+                        kl_beta=model_args.get('kl_beta', 0.2))
     
     # First compute propensity scores
     mf._compute_IPS(x_train, 
@@ -543,7 +553,9 @@ def objective(trial, args):
             'dis_lamb': trial.suggest_categorical('dis_lamb', ranges['dis_lamb']),
             'abc_model_name': trial.suggest_categorical('abc_model_name', ranges['abc_model_name']),
             'copy_model_pred': 1,
-            'pred_model_name': args.pred_model_name  # From command line
+            'pred_model_name': args.pred_model_name,  # From command line
+            'use_kl': trial.suggest_categorical('use_kl', ranges['use_kl']),
+            'kl_beta': trial.suggest_categorical('kl_beta', ranges['kl_beta'])
         }
     elif args.model_type == 'minimaxv2':
         # MinimaxV2 with unified embedding size
@@ -575,7 +587,9 @@ def objective(trial, args):
             'abc_model_name': trial.suggest_categorical('abc_model_name', ranges['abc_model_name']),
             'copy_model_pred': 1,
             'model_type': 'minimaxv2',  # Pass model type to train function
-            'pred_model_name': args.pred_model_name  # From command line
+            'pred_model_name': args.pred_model_name,  # From command line
+            'use_kl': trial.suggest_categorical('use_kl', ranges['use_kl']),
+            'kl_beta': trial.suggest_categorical('kl_beta', ranges['kl_beta'])
         }
     elif args.model_type == 'minimaxv3':
         # MinimaxV3 with enhanced architecture
@@ -606,7 +620,9 @@ def objective(trial, args):
             'abc_model_name': trial.suggest_categorical('abc_model_name', ['mlp_enhanced', 'logistic_regression']),
             'copy_model_pred': 1,
             'model_type': 'minimaxv3',  # Pass model type to train function
-            'pred_model_name': args.pred_model_name  # From command line
+            'pred_model_name': args.pred_model_name,  # From command line
+            'use_kl': trial.suggest_categorical('use_kl', ranges['use_kl']),
+            'kl_beta': trial.suggest_categorical('kl_beta', ranges['kl_beta'])
         }
     elif args.model_type == 'minimaxv4':
         # MinimaxV4 with standard models + V3 training improvements
@@ -636,7 +652,9 @@ def objective(trial, args):
             'abc_model_name': trial.suggest_categorical('abc_model_name', ['logistic_regression', 'mlp']),
             'copy_model_pred': 1,
             'model_type': 'minimaxv4',  # Pass model type to train function
-            'pred_model_name': args.pred_model_name  # From command line
+            'pred_model_name': args.pred_model_name,  # From command line
+            'use_kl': trial.suggest_categorical('use_kl', ranges['use_kl']),
+            'kl_beta': trial.suggest_categorical('kl_beta', ranges['kl_beta'])
         }
     else:
         # DR-V2 parameters
@@ -880,11 +898,4 @@ if __name__ == '__main__':
 
 
 
-  # For DR-V2 with imputation
-  # python real_world/optuna_search.py --dataset coat --model_type drv2_imp --n_trials 100 --metrics auc ndcg
-
-  # For DR-V2 without imputation
-  # python real_world/optuna_search.py --dataset yahoo --model_type drv2 --n_trials 100 --metrics auc
-
-  # Original Minimax model (default)
-  # python real_world/optuna_search.py --dataset kuai --model_type minimax --n_trials 100
+# python real_world/optuna_search.py --dataset coat --model_type minimax --pred_model_name NCF --n_trials 300 --output_dir optuna_results/yahoo/yahoo_ncf

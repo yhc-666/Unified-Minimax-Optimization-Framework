@@ -1738,7 +1738,8 @@ class mlp(nn.Module):
 
 class MF_Minimax(nn.Module):
     def __init__(self, num_users, num_items, batch_size, batch_size_prop, embedding_k=4, embedding_k1=8,
-                 abc_model_name='logistic_regression', copy_model_pred=1, pred_model_name='MF', *args, **kwargs):
+                 abc_model_name='logistic_regression', copy_model_pred=1, pred_model_name='MF',
+                 use_kl=False, kl_beta=0.2, *args, **kwargs):
         super().__init__()
         self.num_users = num_users
         self.num_items = num_items
@@ -1753,8 +1754,10 @@ class MF_Minimax(nn.Module):
             self.model_pred = NCF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1)
             self.model_impu = NCF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1)
         elif pred_model_name == 'VAECF':
-            self.model_pred = VAECF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1)
-            self.model_impu = VAECF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1)
+            self.model_pred = VAECF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1,
+                                   use_kl=use_kl, kl_beta=kl_beta)
+            self.model_impu = VAECF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1,
+                                   use_kl=use_kl, kl_beta=kl_beta)
         else:  # Default to MF
             self.model_pred = MF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1)
             self.model_impu = MF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1)
@@ -2005,9 +2008,14 @@ class MF_Minimax(nn.Module):
                 ips_loss = (xent_loss - imputation_loss) # batch size
 
                 direct_loss = F.binary_cross_entropy(pred_u, imputation_y1.detach(), reduction='sum')
-                
+
                 dr_loss = (ips_loss + direct_loss) / float(x_sampled.shape[0])
-                
+
+                # Add KL loss for VAECF
+                if hasattr(self.model_pred, 'get_kl_loss'):
+                    kl_loss_pred = self.model_pred.get_kl_loss()
+                    dr_loss = dr_loss + self.model_pred.kl_beta * kl_loss_pred
+
                 optimizer_prediction.zero_grad()
                 dr_loss.backward()
                 optimizer_prediction.step()
@@ -2020,6 +2028,11 @@ class MF_Minimax(nn.Module):
                 e_hat_loss = F.binary_cross_entropy(imputation_y, pred.detach(), reduction='none')
 
                 imp_loss = torch.sum(((e_loss - e_hat_loss) ** 2) * inv_prop.detach()) / float(x_sampled.shape[0])
+
+                # Add KL loss for VAECF
+                if hasattr(self.model_impu, 'get_kl_loss'):
+                    kl_loss_impu = self.model_impu.get_kl_loss()
+                    imp_loss = imp_loss + self.model_impu.kl_beta * kl_loss_impu
 
                 optimizer_imputation.zero_grad()
                 imp_loss.backward()
@@ -2348,9 +2361,14 @@ class MF_MinimaxV2(nn.Module):
                 ips_loss = (xent_loss - imputation_loss) # batch size
 
                 direct_loss = F.binary_cross_entropy(pred_u, imputation_y1.detach(), reduction='sum')
-                
+
                 dr_loss = (ips_loss + direct_loss) / float(x_sampled.shape[0])
-                
+
+                # Add KL loss for VAECF
+                if hasattr(self.model_pred, 'get_kl_loss'):
+                    kl_loss_pred = self.model_pred.get_kl_loss()
+                    dr_loss = dr_loss + self.model_pred.kl_beta * kl_loss_pred
+
                 optimizer_prediction.zero_grad()
                 dr_loss.backward()
                 optimizer_prediction.step()
@@ -2363,6 +2381,11 @@ class MF_MinimaxV2(nn.Module):
                 e_hat_loss = F.binary_cross_entropy(imputation_y, pred.detach(), reduction='none')
 
                 imp_loss = torch.sum(((e_loss - e_hat_loss) ** 2) * inv_prop.detach()) / float(x_sampled.shape[0])
+
+                # Add KL loss for VAECF
+                if hasattr(self.model_impu, 'get_kl_loss'):
+                    kl_loss_impu = self.model_impu.get_kl_loss()
+                    imp_loss = imp_loss + self.model_impu.kl_beta * kl_loss_impu
 
                 optimizer_imputation.zero_grad()
                 imp_loss.backward()
@@ -2728,6 +2751,11 @@ class MF_DR_JL_CE(nn.Module):
                 # total loss
                 loss = ips_loss/self.batch_size + direct_loss/self.batch_size #/G
 
+                # Add KL loss for VAECF
+                if hasattr(self.prediction_model, 'get_kl_loss'):
+                    kl_loss_pred = self.prediction_model.get_kl_loss()
+                    loss = loss + self.prediction_model.kl_beta * kl_loss_pred
+
                 optimizer_prediction.zero_grad()
                 loss.backward()
                 optimizer_prediction.step()
@@ -2743,6 +2771,11 @@ class MF_DR_JL_CE(nn.Module):
                 e_loss = F.binary_cross_entropy(pred, sub_y, reduction="none") ## actual loss: e
                 e_hat_loss = F.binary_cross_entropy(imputation_y, pred, reduction="none") ## imputed loss: e_hat
                 imp_loss = (((e_loss.detach() - e_hat_loss) ** 2) * inv_prop).sum() ## error deviation: (e - e_hat)^2 / p  -> loss function for imputation model
+
+                # Add KL loss for VAECF
+                if hasattr(self.imputation_model, 'get_kl_loss'):
+                    kl_loss_impu = self.imputation_model.get_kl_loss()
+                    imp_loss = imp_loss + self.imputation_model.kl_beta * kl_loss_impu
 
                 optimizer_imputation.zero_grad()
                 imp_loss.backward()
@@ -3531,7 +3564,12 @@ class MF_MinimaxV3(nn.Module):
                 ips_loss = (xent_loss - imputation_loss)  # batch size
                 direct_loss = F.binary_cross_entropy(pred_ul, imputation_ul.detach(), reduction='sum')
                 dr_loss = (ips_loss + direct_loss) / float(x_sampled.shape[0])
-                
+
+                # Add KL loss for VAECF
+                if hasattr(self.model_pred, 'get_kl_loss'):
+                    kl_loss_pred = self.model_pred.get_kl_loss()
+                    dr_loss = dr_loss + self.model_pred.kl_beta * kl_loss_pred
+
                 optimizer_prediction.zero_grad()
                 dr_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model_pred.parameters(), max_norm=grad_clip_norm)
@@ -3546,9 +3584,14 @@ class MF_MinimaxV3(nn.Module):
                 
                 e_loss = F.binary_cross_entropy(pred_detached.detach(), batch_y_tensor, reduction='none')
                 e_hat_loss = F.binary_cross_entropy(imputation_y, pred_detached.detach(), reduction='none')
-                
+
                 imp_loss = torch.sum(((e_loss - e_hat_loss) ** 2) * inv_prop.detach()) / float(x_sampled.shape[0])
-                
+
+                # Add KL loss for VAECF
+                if hasattr(self.model_impu, 'get_kl_loss'):
+                    kl_loss_impu = self.model_impu.get_kl_loss()
+                    imp_loss = imp_loss + self.model_impu.kl_beta * kl_loss_impu
+
                 optimizer_imputation.zero_grad()
                 imp_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model_impu.parameters(), max_norm=grad_clip_norm)
@@ -3652,13 +3695,14 @@ class MF_MinimaxV3(nn.Module):
 class MF_MinimaxV4(nn.Module):
     """
     MF_MinimaxV4: Uses standard models (like V1) with V3's training improvements
-    - Standard MF for prediction/imputation (no BatchNorm/Dropout)
+    - Standard MF/NCF/VAECF for prediction/imputation (no BatchNorm/Dropout)
     - Standard logistic_regression or mlp for discriminator
     - Keeps V3's training enhancements: LR scheduling, gradient clipping, better early stopping
     """
-    def __init__(self, num_users, num_items, batch_size, batch_size_prop, 
+    def __init__(self, num_users, num_items, batch_size, batch_size_prop,
                  embedding_k=4, embedding_k1=8,
-                 abc_model_name='logistic_regression', copy_model_pred=1, *args, **kwargs):
+                 abc_model_name='logistic_regression', copy_model_pred=1, pred_model_name='MF',
+                 use_kl=False, kl_beta=0.2, *args, **kwargs):
         super().__init__()
         self.num_users = num_users
         self.num_items = num_items
@@ -3666,10 +3710,20 @@ class MF_MinimaxV4(nn.Module):
         self.embedding_k1 = embedding_k1
         self.batch_size = batch_size
         self.batch_size_prop = batch_size_prop
-        
-        # Use standard MF for prediction and imputation (like V1)
-        self.model_pred = MF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1)
-        self.model_impu = MF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1)
+        self.pred_model_name = pred_model_name  # Store for later reference
+
+        # Use MF, NCF, or VAECF for both prediction and imputation models (must use same architecture)
+        if pred_model_name == 'NCF':
+            self.model_pred = NCF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1)
+            self.model_impu = NCF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1)
+        elif pred_model_name == 'VAECF':
+            self.model_pred = VAECF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1,
+                                   use_kl=use_kl, kl_beta=kl_beta)
+            self.model_impu = VAECF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1,
+                                   use_kl=use_kl, kl_beta=kl_beta)
+        else:  # Default to MF
+            self.model_pred = MF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1)
+            self.model_impu = MF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1)
         
         # Use standard logistic regression for propensity
         self.model_prop = logistic_regression(self.num_users, self.num_items, embedding_k=self.embedding_k)
@@ -3775,9 +3829,16 @@ class MF_MinimaxV4(nn.Module):
         Training with V3's enhancements but using standard models
         """
         
-        print('Stage2: fitting (V4 with standard models + V3 training)', G, alpha, beta, theta, gamma, num_bins, 
+        print('Stage2: fitting (V4 with standard models + V3 training)', G, alpha, beta, theta, gamma, num_bins,
               pred_lr, impu_lr, prop_lr, dis_lr, lamb_prop, lamb_pred, lamb_imp, dis_lamb)
-        
+
+        # Initialize VAECF user history if using VAECF
+        if self.pred_model_name == 'VAECF':
+            if verbose:
+                print("[MinimaxV4] Initializing VAECF user history from training data...")
+            self.model_pred.set_user_hist_from_pairs(x, y)
+            self.model_impu.set_user_hist_from_pairs(x, y)
+
         # Create optimizers
         optimizer_prediction = torch.optim.Adam(self.model_pred.parameters(), lr=pred_lr, weight_decay=lamb_pred)
         optimizer_imputation = torch.optim.Adam(self.model_impu.parameters(), lr=impu_lr, weight_decay=lamb_imp)
