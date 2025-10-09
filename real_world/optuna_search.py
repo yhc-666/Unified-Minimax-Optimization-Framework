@@ -216,40 +216,44 @@ def train_and_eval_with_params(dataset_name, train_args, model_args, seed=2020):
     # Create model
     if model_args.get('model_type') == 'minimaxv2':
         # For MinimaxV2, use unified embedding size
-        mf = MF_MinimaxV2(num_user, num_item, 
-                         batch_size=train_args['batch_size'], 
+        mf = MF_MinimaxV2(num_user, num_item,
+                         batch_size=train_args['batch_size'],
                          batch_size_prop=train_args['batch_size_prop'],
-                         embedding_k=model_args['embedding_k'], 
+                         embedding_k=model_args['embedding_k'],
                          embedding_k1=model_args['embedding_k'],  # Same as embedding_k for unified size
                          abc_model_name=model_args.get('abc_model_name', 'logistic_regression'),
-                         copy_model_pred=model_args.get('copy_model_pred', 1))
+                         copy_model_pred=model_args.get('copy_model_pred', 1),
+                         pred_model_name=model_args.get('pred_model_name', 'MF'))
     elif model_args.get('model_type') == 'minimaxv3':
         # For MinimaxV3, use enhanced architecture with dropout
-        mf = MF_MinimaxV3(num_user, num_item, 
-                         batch_size=train_args['batch_size'], 
+        mf = MF_MinimaxV3(num_user, num_item,
+                         batch_size=train_args['batch_size'],
                          batch_size_prop=train_args['batch_size_prop'],
-                         embedding_k=model_args['embedding_k'], 
+                         embedding_k=model_args['embedding_k'],
                          embedding_k1=model_args['embedding_k1'],
                          dropout_rate=model_args.get('dropout_rate', 0.2),
                          abc_model_name=model_args.get('abc_model_name', 'mlp_enhanced'),
-                         copy_model_pred=model_args.get('copy_model_pred', 1))
+                         copy_model_pred=model_args.get('copy_model_pred', 1),
+                         pred_model_name=model_args.get('pred_model_name', 'MF'))
     elif model_args.get('model_type') == 'minimaxv4':
         # For MinimaxV4, use standard models with V3's training improvements
-        mf = MF_MinimaxV4(num_user, num_item, 
-                         batch_size=train_args['batch_size'], 
+        mf = MF_MinimaxV4(num_user, num_item,
+                         batch_size=train_args['batch_size'],
                          batch_size_prop=train_args['batch_size_prop'],
-                         embedding_k=model_args['embedding_k'], 
+                         embedding_k=model_args['embedding_k'],
                          embedding_k1=model_args['embedding_k1'],
                          abc_model_name=model_args.get('abc_model_name', 'logistic_regression'),
-                         copy_model_pred=model_args.get('copy_model_pred', 1))
+                         copy_model_pred=model_args.get('copy_model_pred', 1),
+                         pred_model_name=model_args.get('pred_model_name', 'MF'))
     else:
-        mf = MF_Minimax(num_user, num_item, 
-                        batch_size=train_args['batch_size'], 
+        mf = MF_Minimax(num_user, num_item,
+                        batch_size=train_args['batch_size'],
                         batch_size_prop=train_args['batch_size_prop'],
-                        embedding_k=model_args['embedding_k'], 
+                        embedding_k=model_args['embedding_k'],
                         embedding_k1=model_args['embedding_k1'],
                         abc_model_name=model_args.get('abc_model_name', 'logistic_regression'),
-                        copy_model_pred=model_args.get('copy_model_pred', 1))
+                        copy_model_pred=model_args.get('copy_model_pred', 1),
+                        pred_model_name=model_args.get('pred_model_name', 'MF'))
     
     # First compute propensity scores
     mf._compute_IPS(x_train, 
@@ -538,7 +542,8 @@ def objective(trial, args):
             'lamb_prop': trial.suggest_categorical('lamb_prop', ranges['lamb_prop']),
             'dis_lamb': trial.suggest_categorical('dis_lamb', ranges['dis_lamb']),
             'abc_model_name': trial.suggest_categorical('abc_model_name', ranges['abc_model_name']),
-            'copy_model_pred': 1
+            'copy_model_pred': 1,
+            'pred_model_name': args.pred_model_name  # From command line
         }
     elif args.model_type == 'minimaxv2':
         # MinimaxV2 with unified embedding size
@@ -569,7 +574,8 @@ def objective(trial, args):
             'dis_lamb': trial.suggest_categorical('dis_lamb', ranges['dis_lamb']),
             'abc_model_name': trial.suggest_categorical('abc_model_name', ranges['abc_model_name']),
             'copy_model_pred': 1,
-            'model_type': 'minimaxv2'  # Pass model type to train function
+            'model_type': 'minimaxv2',  # Pass model type to train function
+            'pred_model_name': args.pred_model_name  # From command line
         }
     elif args.model_type == 'minimaxv3':
         # MinimaxV3 with enhanced architecture
@@ -599,7 +605,8 @@ def objective(trial, args):
             'grad_clip_norm': trial.suggest_categorical('grad_clip_norm', [0.5, 1.0, 2.0]),
             'abc_model_name': trial.suggest_categorical('abc_model_name', ['mlp_enhanced', 'logistic_regression']),
             'copy_model_pred': 1,
-            'model_type': 'minimaxv3'  # Pass model type to train function
+            'model_type': 'minimaxv3',  # Pass model type to train function
+            'pred_model_name': args.pred_model_name  # From command line
         }
     elif args.model_type == 'minimaxv4':
         # MinimaxV4 with standard models + V3 training improvements
@@ -628,7 +635,8 @@ def objective(trial, args):
             'grad_clip_norm': trial.suggest_categorical('grad_clip_norm', [0.5, 1.0, 2.0]),
             'abc_model_name': trial.suggest_categorical('abc_model_name', ['logistic_regression', 'mlp']),
             'copy_model_pred': 1,
-            'model_type': 'minimaxv4'  # Pass model type to train function
+            'model_type': 'minimaxv4',  # Pass model type to train function
+            'pred_model_name': args.pred_model_name  # From command line
         }
     else:
         # DR-V2 parameters
@@ -752,7 +760,10 @@ def parse_args():
                         help='Name for the optuna study')
     parser.add_argument('--storage', type=str, default=None,
                         help='Database URL for distributed optimization')
-    
+    parser.add_argument('--pred_model_name', type=str, default='MF',
+                        choices=['MF', 'NCF', 'VAECF'],
+                        help='Prediction model architecture: MF (Matrix Factorization), NCF (Neural Collaborative Filtering), or VAECF (Variational Autoencoder CF)')
+
     args = parser.parse_args()
     
     # check that metrics and directions have the same length
