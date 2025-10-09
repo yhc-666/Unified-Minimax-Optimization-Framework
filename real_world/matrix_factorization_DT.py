@@ -256,7 +256,7 @@ class VAECF(nn.Module):
         """Prediction method matching MF/NCF interface"""
         with torch.no_grad():
             pred = self.forward(x, is_training=False)
-            return pred.detach().cpu()
+            return pred
 
     def get_kl_loss(self):
         """Return the last computed KL divergence (for potential regularization)"""
