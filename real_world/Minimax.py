@@ -129,7 +129,8 @@ def train_and_eval(dataset_name, train_args, model_args, seed=2020):
     mf = MF_Minimax(num_user, num_item, batch_size=train_args['batch_size'], batch_size_prop=train_args['batch_size_prop'],
                     embedding_k=model_args['embedding_k'], embedding_k1=model_args['embedding_k1'],
                     abc_model_name=model_args.get('abc_model_name', 'logistic_regression'),
-                    copy_model_pred=model_args.get('copy_model_pred', 1))
+                    copy_model_pred=model_args.get('copy_model_pred', 1),
+                    pred_model_name=model_args.get('pred_model_name', 'MF'))
     
     init_time = time.time() - init_start_time
     
@@ -261,7 +262,8 @@ def para(args):
             "lamb_imp": 0.0001,               # Weight decay for imputation model
             "dis_lamb": 0.005,                # Weight decay for discriminator model
             "abc_model_name": "logistic_regression",  # Architecture for adversarial discriminator ("logistic_regression" or "mlp")
-            "copy_model_pred": 1            # Whether to initialize imputation model with prediction model weights (1=yes, 0=no)
+            "copy_model_pred": 1,            # Whether to initialize imputation model with prediction model weights (1=yes, 0=no)
+            "pred_model_name": "MF"         # Prediction/imputation model architecture ("MF", "NCF", or "VAECF")
         }
     elif args.dataset=="yahoo":
         args.train_args = {
@@ -287,7 +289,8 @@ def para(args):
             "lamb_imp": 0.039023385901065,               # Weight decay for imputation model (prevents overfitting)
             "dis_lamb": 0.0437005524910195,                # Weight decay for discriminator model
             "abc_model_name": "mlp",  # Same discriminator architecture
-            "copy_model_pred": 1            # Initialize imputation from prediction
+            "copy_model_pred": 1,            # Initialize imputation from prediction
+            "pred_model_name": "MF"         # Prediction/imputation model architecture ("MF", "NCF", or "VAECF")
         }
     elif args.dataset=="kuai":
         args.train_args = {
@@ -313,7 +316,8 @@ def para(args):
             "lamb_imp": 1e-5,               # Weight decay for imputation model
             "dis_lamb": 1e-5,                # Weight decay for discriminator model
             "abc_model_name": "mlp",  # Standard discriminator
-            "copy_model_pred": 1            # Initialize imputation from prediction
+            "copy_model_pred": 1,            # Initialize imputation from prediction
+            "pred_model_name": "MF"         # Prediction/imputation model architecture ("MF", "NCF", or "VAECF")
         }
     return args
 

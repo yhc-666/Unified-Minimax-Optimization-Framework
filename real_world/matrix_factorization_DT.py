@@ -62,6 +62,206 @@ class MF(nn.Module):
             pred = self.forward(x)
             return pred
 
+class NCF(nn.Module):
+    """NCF wrapper compatible with MF interface"""
+    def __init__(self, num_users, num_items, batch_size, embedding_k=4, *args, **kwargs):
+        super(NCF, self).__init__()
+        self.num_users = num_users
+        self.num_items = num_items
+        self.embedding_k = embedding_k
+        self.batch_size = batch_size
+        self.W = torch.nn.Embedding(self.num_users, self.embedding_k)
+        self.H = torch.nn.Embedding(self.num_items, self.embedding_k)
+        self.linear_1 = torch.nn.Linear(self.embedding_k*2, 1, bias=True)
+        self.sigmoid = torch.nn.Sigmoid()
+        self.xent_func = torch.nn.BCELoss()
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    def forward(self, x, is_training=False):
+        if isinstance(x, np.ndarray):
+            x = torch.LongTensor(x).to(self.device)
+        user_idx = x[:,0]
+        item_idx = x[:,1]
+        U_emb = self.W(user_idx)
+        V_emb = self.H(item_idx)
+
+        # Concatenate embeddings
+        z_emb = torch.cat([U_emb, V_emb], axis=1)
+        out = self.sigmoid(self.linear_1(z_emb))
+
+        if is_training:
+            return torch.squeeze(out), U_emb, V_emb
+        else:
+            return torch.squeeze(out)
+
+    def predict(self, x):
+        with torch.no_grad():
+            pred = self.forward(x)
+            return pred
+
+class VAECF(nn.Module):
+    """
+    Variational Autoencoder for Collaborative Filtering (VAE-CF)
+    Compatible with MF/NCF interface for use in MF_Minimax framework.
+
+    Key features:
+    - Encodes user interaction history into latent space
+    - Decodes to predict item ratings
+    - Supports optional KL divergence regularization
+    - Efficient pair-wise prediction without full matrix computation
+    """
+    def __init__(self, num_users, num_items, batch_size, embedding_k=64,
+                 latent_dim=None, hidden_dims=(600, 200), use_kl=False, kl_beta=0.2,
+                 *args, **kwargs):
+        super(VAECF, self).__init__()
+
+        # Use embedding_k as latent_dim for consistency with MF/NCF interface
+        if latent_dim is None:
+            latent_dim = embedding_k
+
+        self.num_users = num_users
+        self.num_items = num_items
+        self.batch_size = batch_size
+        self.latent_dim = latent_dim
+        self.hidden_dims = hidden_dims
+        self.use_kl = use_kl
+        self.kl_beta = kl_beta
+
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        h1, h2 = hidden_dims
+        # Encoder: user history (I-dim) -> hidden -> (mu, logvar)
+        self.enc_fc1 = nn.Linear(num_items, h1)
+        self.enc_fc2 = nn.Linear(h1, h2)
+        self.mu = nn.Linear(h2, latent_dim)
+        self.logvar = nn.Linear(h2, latent_dim)
+
+        # Decoder: latent z -> item logits (linear decoder)
+        self.decoder = nn.Linear(latent_dim, num_items, bias=True)
+
+        self.sigmoid = nn.Sigmoid()
+        self.xent_func = nn.BCELoss()
+
+        # User history storage: (U, I) dense matrix
+        self._user_hist_dense = None
+        self._kl = torch.tensor(0.0, device=self.device)
+
+        self.to(self.device)
+
+    def set_user_hist_from_pairs(self, x_pairs, y_labels, keep_dense_if_items_leq=20000):
+        """
+        Build user interaction history from (user, item) pairs.
+
+        Args:
+            x_pairs: np.ndarray shape (N, 2) with [user_id, item_id]
+            y_labels: np.ndarray shape (N,) with ratings in {0, 1}
+            keep_dense_if_items_leq: threshold for dense storage
+        """
+        if not torch.is_tensor(x_pairs):
+            x_pairs = torch.as_tensor(x_pairs)
+        if not torch.is_tensor(y_labels):
+            y_labels = torch.as_tensor(y_labels)
+
+        x_pairs = x_pairs.long().cpu()
+        y_labels = y_labels.float().cpu()
+
+        U, I = self.num_users, self.num_items
+
+        # Build user-item interaction matrix (only positive interactions)
+        mat = torch.zeros((U, I), dtype=torch.float32)
+        pos = y_labels > 0.5
+        u_idx = x_pairs[pos, 0]
+        i_idx = x_pairs[pos, 1]
+        mat[u_idx, i_idx] = 1.0
+
+        self._user_hist_dense = mat.to(self.device)
+
+    def _encode(self, x_dense, is_training):
+        """Encode user history to latent space"""
+        h = F.tanh(self.enc_fc1(x_dense))
+        h = F.tanh(self.enc_fc2(h))
+        mu = self.mu(h)
+        logvar = self.logvar(h)
+
+        if self.use_kl and is_training:
+            # Reparameterization trick
+            std = torch.exp(0.5 * logvar)
+            eps = torch.randn_like(std)
+            z = mu + eps * std
+            # KL divergence
+            self._kl = (-0.5 * (1 + logvar - mu.pow(2) - logvar.exp()).sum(dim=1)).mean()
+        else:
+            z = mu
+            self._kl = torch.tensor(0.0, device=self.device)
+
+        return z
+
+    def _pair_logits(self, user_idx, item_idx, is_training):
+        """
+        Efficient pair-wise logit computation.
+        Computes logit(u,i) = <z_u, W_dec[i]> + b[i]
+        """
+        if self._user_hist_dense is None:
+            raise RuntimeError("Must call set_user_hist_from_pairs() before forward/predict")
+
+        user_idx = user_idx.to(self.device).long()
+        item_idx = item_idx.to(self.device).long()
+
+        # Only encode unique users in this batch
+        uniq_u, inv = torch.unique(user_idx, return_inverse=True)
+        x_dense = self._user_hist_dense.index_select(0, uniq_u)
+        z = self._encode(x_dense, is_training=is_training)
+
+        # Get decoder parameters
+        W = self.decoder.weight  # (I, d)
+        b = self.decoder.bias    # (I,)
+
+        # Get embeddings for each pair
+        z_pair = z.index_select(0, inv)          # (B, d)
+        W_i = W.index_select(0, item_idx)        # (B, d)
+        b_i = b.index_select(0, item_idx)        # (B,)
+
+        logits = (z_pair * W_i).sum(dim=1) + b_i  # (B,)
+        return logits
+
+    def forward(self, x, is_training=False):
+        """
+        Forward pass matching MF/NCF interface.
+
+        Args:
+            x: (user, item) pairs, shape (B, 2)
+            is_training: whether in training mode
+
+        Returns:
+            if is_training: (probs, None, None)  # None for U_emb, V_emb compatibility
+            else: probs
+        """
+        if isinstance(x, np.ndarray):
+            x = torch.LongTensor(x).to(self.device)
+
+        user_idx = x[:, 0]
+        item_idx = x[:, 1]
+
+        logits = self._pair_logits(user_idx, item_idx, is_training)
+        probs = self.sigmoid(logits)
+
+        if is_training:
+            # Return tuple matching MF/NCF interface
+            # VAE-CF doesn't have explicit U/V embeddings, so return None
+            return probs, None, None
+        else:
+            return probs
+
+    def predict(self, x):
+        """Prediction method matching MF/NCF interface"""
+        with torch.no_grad():
+            pred = self.forward(x, is_training=False)
+            return pred.detach().cpu()
+
+    def get_kl_loss(self):
+        """Return the last computed KL divergence (for potential regularization)"""
+        return self._kl
+
 class MF_BaseModel(nn.Module):
     def __init__(self, num_users, num_items, embedding_k=4, *args, **kwargs):
         super(MF_BaseModel, self).__init__()
@@ -1537,8 +1737,8 @@ class mlp(nn.Module):
 
 
 class MF_Minimax(nn.Module):
-    def __init__(self, num_users, num_items, batch_size, batch_size_prop, embedding_k=4, embedding_k1=8, 
-                 abc_model_name='logistic_regression', copy_model_pred=1, *args, **kwargs):
+    def __init__(self, num_users, num_items, batch_size, batch_size_prop, embedding_k=4, embedding_k1=8,
+                 abc_model_name='logistic_regression', copy_model_pred=1, pred_model_name='MF', *args, **kwargs):
         super().__init__()
         self.num_users = num_users
         self.num_items = num_items
@@ -1546,21 +1746,29 @@ class MF_Minimax(nn.Module):
         self.embedding_k1 = embedding_k1
         self.batch_size = batch_size
         self.batch_size_prop = batch_size_prop  # Same as batch_size for simplicity
-        
-        # Use MF from matrix_factorization_DT.py for prediction and imputation
-        self.model_pred = MF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1)
-        self.model_impu = MF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1)
-        
+        self.pred_model_name = pred_model_name  # Store for later reference
+
+        # Use MF, NCF, or VAECF for both prediction and imputation models (must use same architecture)
+        if pred_model_name == 'NCF':
+            self.model_pred = NCF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1)
+            self.model_impu = NCF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1)
+        elif pred_model_name == 'VAECF':
+            self.model_pred = VAECF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1)
+            self.model_impu = VAECF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1)
+        else:  # Default to MF
+            self.model_pred = MF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1)
+            self.model_impu = MF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1)
+
         # Use logistic_regression for propensity
         self.model_prop = logistic_regression(self.num_users, self.num_items, embedding_k=self.embedding_k)
-        
+
         # Use logistic_regression or mlp for abc
         if abc_model_name == 'logistic_regression':
             self.model_abc = logistic_regression(self.num_users, self.num_items, embedding_k=self.embedding_k)
         elif abc_model_name == 'mlp':
             self.model_abc = mlp(self.num_users, self.num_items, embedding_k=self.embedding_k)
-        
-        # Copy model weights if specified
+
+        # Copy model weights if specified (works for both MF and NCF since they use same architecture)
         if copy_model_pred == 1:
             self.model_impu.load_state_dict(self.model_pred.state_dict())
         
@@ -1667,13 +1875,22 @@ class MF_Minimax(nn.Module):
         """ 
         
         print('Stage2: fitting', G, alpha, beta, theta, gamma, num_bins, pred_lr, impu_lr, prop_lr, dis_lr, lamb_prop, lamb_pred, lamb_imp, dis_lamb)
-        
+
+        # Initialize VAECF user history if using VAECF
+        if self.pred_model_name == 'VAECF':
+            if verbose:
+                print("[Minimax] Initializing VAECF user history from training data...")
+            self.model_pred.set_user_hist_from_pairs(x, y)
+            self.model_impu.set_user_hist_from_pairs(x, y)
+            if verbose:
+                print("[Minimax] VAECF user history initialized successfully")
+
         # Create optimizers with separate learning rates and weight decays
         optimizer_prediction = torch.optim.Adam(self.model_pred.parameters(), lr=pred_lr, weight_decay=lamb_pred)
         optimizer_imputation = torch.optim.Adam(self.model_impu.parameters(), lr=impu_lr, weight_decay=lamb_imp)
         optimizer_propensity = torch.optim.Adam(self.model_prop.parameters(), lr=prop_lr, weight_decay=lamb_prop)
         optimizer_dis = torch.optim.Adam(self.model_abc.parameters(), lr=dis_lr, weight_decay=dis_lamb)
-        
+
         
         # Generate all samples and obs
         x_all = generate_total_sample(self.num_users, self.num_items)
