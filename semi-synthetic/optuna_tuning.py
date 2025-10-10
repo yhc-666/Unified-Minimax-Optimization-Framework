@@ -16,6 +16,8 @@ import torch
 import optuna
 from optuna.samplers import TPESampler
 import pandas as pd
+from tqdm import tqdm
+import sys
 
 # Import functions from evaluation.py
 from evaluation import (
@@ -31,6 +33,49 @@ from evaluation import (
 )
 
 # Hyperparameter search ranges
+class ProgressCallback:
+    """Custom callback to display detailed training progress in-place."""
+
+    def __init__(self, n_trials: int, objective: str, direction: str):
+        self.n_trials = n_trials
+        self.objective = objective
+        self.direction = direction
+        self.best_value = float('inf') if direction == 'minimize' else float('-inf')
+        self.best_trial = None
+        self.trial_bar = None
+
+    def __call__(self, study: optuna.Study, trial: optuna.trial.FrozenTrial):
+        """Called after each trial completes."""
+        # Update best value
+        if trial.value is not None:
+            if self.direction == 'minimize':
+                if trial.value < self.best_value:
+                    self.best_value = trial.value
+                    self.best_trial = trial.number
+            else:
+                if trial.value > self.best_value:
+                    self.best_value = trial.value
+                    self.best_trial = trial.number
+
+        # Print compact trial summary
+        if trial.value is not None:
+            print(f"\n{'='*80}")
+            print(f"Trial {trial.number}/{self.n_trials} completed | {self.objective}: {trial.value:.6f}")
+
+            # Show key hyperparameters
+            key_params = ['lr', 'embedding_k', 'gamma', 'G', 'beta', 'bmse_weight', 'ece_weight']
+            param_str = ' | '.join([f"{k}={trial.params[k]}" for k in key_params if k in trial.params])
+            print(f"Params: {param_str}")
+
+            # Show best so far
+            if self.best_trial is not None:
+                improvement = "✓" if trial.number == self.best_trial else " "
+                print(f"Best so far: Trial {self.best_trial} | {self.objective}: {self.best_value:.6f} {improvement}")
+            print(f"{'='*80}")
+        else:
+            print(f"\nTrial {trial.number}/{self.n_trials} FAILED")
+
+
 HYPERPARAM_RANGES = {
     # Common parameters for all models
     'common': {
@@ -77,7 +122,8 @@ def create_trial_params(trial: optuna.Trial, model_name: str, args) -> Dict[str,
         'save_results': None,  # Don't save individual results during optimization
         'data_dir': args.data_dir,
         'propensity_p': args.propensity_p,
-        'device': args.device  # Pass device to train_and_evaluate_model
+        'device': args.device,  # Pass device to train_and_evaluate_model
+        'binning_mode': args.binning_mode  # Pass binning_mode for MF_Minimax
     }
     
     # Model-specific parameters
@@ -103,44 +149,57 @@ def create_trial_params(trial: optuna.Trial, model_name: str, args) -> Dict[str,
 
 def objective(trial: optuna.Trial, args, data_splits: Dict) -> float:
     """Objective function for Optuna optimization."""
-    
+
     # Create hyperparameters for this trial
     trial_params = create_trial_params(trial, args.model, args)
-    
+
+    # Print trial start info
+    print(f"\n{'='*80}")
+    print(f"Starting Trial {trial.number}")
+    key_params = ['lr', 'embedding_k', 'gamma', 'G', 'beta', 'bmse_weight', 'ece_weight']
+    param_str = ' | '.join([f"{k}={trial_params[k]}" for k in key_params if k in trial_params])
+    print(f"Testing: {param_str}")
+    print(f"{'='*80}\n")
+
     # Convert params to args-like object
     class Args:
         pass
-    
+
     trial_args = Args()
     for key, value in trial_params.items():
         setattr(trial_args, key, value)
-    
+
     # Add model list for train_and_evaluate_model
     trial_args.models = [args.model]
-    
+
+    # Enable verbose to show tqdm bars (but not per-epoch metrics)
+    trial_args.verbose = True
+
     try:
         # Train and evaluate model
         start_time = time.time()
         model, predictions, metrics = train_and_evaluate_model(args.model, data_splits, trial_args, device=trial_args.device)
         training_time = time.time() - start_time
-        
+
         # Get the objective metric
         objective_value = metrics[args.objective]
-        
+
         # Store all metrics as user attributes
         for metric_name, value in metrics.items():
             if metric_name != 'model':
                 trial.set_user_attr(metric_name, value)
         trial.set_user_attr('training_time', training_time)
-        
+
         # Save trial to CSV if requested
         if args.save_all_trials:
             save_trial_to_csv(trial, metrics, args, trial_params)
-        
+
         return objective_value
-        
+
     except Exception as e:
+        print(f"\n{'!'*80}")
         print(f"Trial {trial.number} failed with error: {e}")
+        print(f"{'!'*80}\n")
         # Return worst possible value
         return float('inf') if args.direction == 'minimize' else float('-inf')
 
@@ -275,6 +334,9 @@ def parse_args():
                        help='Propensity parameter (0.5 or 0.6)')
     parser.add_argument('--device', type=str, default=None,
                        help='Device to use (e.g., "cpu", "cuda", "cuda:0", "cuda:1"). Auto-detect if not specified.')
+    parser.add_argument('--binning_mode', type=str, default='equal_freq',
+                       choices=['equal_freq', 'equal_width'],
+                       help='Binning mode for MF_Minimax: equal_freq (quantile-based) or equal_width (fixed intervals)')
 
     # Output settings
     parser.add_argument('--save_all_trials', action='store_true',
@@ -343,12 +405,21 @@ def main():
             sampler=TPESampler(seed=args.seed)
         )
     
+    # Create progress callback
+    progress_callback = ProgressCallback(
+        n_trials=args.n_trials,
+        objective=args.objective,
+        direction=args.direction
+    )
+
     # Run optimization
     print(f"\nStarting optimization with {args.n_trials} trials...")
+    print(f"{'='*80}\n")
     study.optimize(
         lambda trial: objective(trial, args, data_splits),
         n_trials=args.n_trials,
-        show_progress_bar=True
+        callbacks=[progress_callback],
+        show_progress_bar=False  # Disable default bar, use custom callback instead
     )
     
     # Save results

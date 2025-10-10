@@ -379,7 +379,8 @@ def train_and_evaluate_model(model_name: str, data_splits: Dict, args, device=No
             batch_size_prop=args.batch_size * 2,
             embedding_k=args.embedding_k,
             embedding_k1=args.embedding_k,  # For prediction/imputation models
-            abc_model_name='logistic_regression'
+            abc_model_name='logistic_regression',
+            binning_mode=getattr(args, 'binning_mode', 'equal_freq')  # Support binning_mode, default to equal_freq
         )
     elif model_name == 'MF_DR_BIAS':
         model = MF_DR_BIAS(
@@ -618,6 +619,9 @@ def main():
                        help='Propensity parameter (0.5 or 0.6)')
     parser.add_argument('--device', type=str, default=None,
                        help='Device to use (e.g., "cpu", "cuda", "cuda:0", "cuda:1"). Auto-detect if not specified.')
+    parser.add_argument('--binning_mode', type=str, default='equal_freq',
+                       choices=['equal_freq', 'equal_width'],
+                       help='Binning mode for MF_Minimax: equal_freq (quantile-based) or equal_width (fixed intervals)')
 
     args = parser.parse_args()
     
