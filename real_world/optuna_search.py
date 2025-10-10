@@ -898,4 +898,4 @@ if __name__ == '__main__':
 
 
 
-# python real_world/optuna_search.py --dataset coat --model_type minimax --pred_model_name NCF --n_trials 300 --output_dir optuna_results/yahoo/yahoo_ncf
+#python real_world/optuna_search.py --dataset coat --model_type minimax --pred_model_name VAECF --n_trials 100 --output_dir optuna_results/coat/coat_vaecf

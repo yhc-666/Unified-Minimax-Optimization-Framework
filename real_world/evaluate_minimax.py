@@ -19,7 +19,7 @@ import os
 from typing import Dict, List, Tuple
 
 from dataset import load_data
-from matrix_factorization_DT import generate_total_sample, MF_Minimax
+from matrix_factorization_DT import generate_total_sample, MF_Minimax, MF_Minimax_EqualWidth
 from utils import gini_index, ndcg_func, get_user_wise_ctr, rating_mat_to_sample, binarize, shuffle, minU, precision_func, recall_func
 
 mse_func = lambda x,y: np.mean((x-y)**2)
@@ -180,17 +180,26 @@ def count_parameters(model):
     return total_params, param_details
 
 
-def train_and_eval_minimax(dataset_name, train_args, model_args, x_test, y_test):
-    """Train Minimax model and evaluate with metrics - using exact logic from Minimax.py"""
-    
+def train_and_eval_minimax(dataset_name, train_args, model_args, x_test, y_test, binning_method='equal_freq'):
+    """Train Minimax model and evaluate with metrics - using exact logic from Minimax.py
+
+    Args:
+        dataset_name: Name of dataset ('coat', 'yahoo', or 'kuai')
+        train_args: Training arguments dictionary
+        model_args: Model arguments dictionary
+        x_test: Test user-item pairs
+        y_test: Test ratings
+        binning_method: Binning strategy to use ('equal_freq' or 'equal_width')
+    """
+
     # Set up top_k values based on dataset
     top_k_list = [5]
     if dataset_name == "kuai":
         top_k_list = [20]
-    
+
     # Load data
     if dataset_name == "coat":
-        train_mat, test_mat = load_data("coat")        
+        train_mat, test_mat = load_data("coat")
         x_train, y_train = rating_mat_to_sample(train_mat)
         x_test, y_test = rating_mat_to_sample(test_mat)
         num_user = train_mat.shape[0]
@@ -210,7 +219,8 @@ def train_and_eval_minimax(dataset_name, train_args, model_args, x_test, y_test)
     torch.manual_seed(2020)
 
     print("# user: {}, # item: {}".format(num_user, num_item))
-    
+    print(f"Binning method: {binning_method}")
+
     # Binarize labels
     if dataset_name == "kuai":
         y_train = binarize(y_train, 2)
@@ -219,16 +229,21 @@ def train_and_eval_minimax(dataset_name, train_args, model_args, x_test, y_test)
         y_train = binarize(y_train, 3)
         y_test = binarize(y_test, 3)
 
-    "Minimax"
     # Start timing for model initialization
     init_start_time = time.time()
-    
-    # Create model
-    mf = MF_Minimax(num_user, num_item, batch_size=train_args['batch_size'], batch_size_prop=train_args['batch_size_prop'],
-                    embedding_k=model_args['embedding_k'], embedding_k1=model_args['embedding_k1'],
-                    abc_model_name=model_args.get('abc_model_name', 'logistic_regression'),
-                    copy_model_pred=model_args.get('copy_model_pred', 1))
-    
+
+    # Create model based on binning method
+    if binning_method == 'equal_width':
+        mf = MF_Minimax_EqualWidth(num_user, num_item, batch_size=train_args['batch_size'], batch_size_prop=train_args['batch_size_prop'],
+                        embedding_k=model_args['embedding_k'], embedding_k1=model_args['embedding_k1'],
+                        abc_model_name=model_args.get('abc_model_name', 'logistic_regression'),
+                        copy_model_pred=model_args.get('copy_model_pred', 1))
+    else:  # default to equal_freq
+        mf = MF_Minimax(num_user, num_item, batch_size=train_args['batch_size'], batch_size_prop=train_args['batch_size_prop'],
+                        embedding_k=model_args['embedding_k'], embedding_k1=model_args['embedding_k1'],
+                        abc_model_name=model_args.get('abc_model_name', 'logistic_regression'),
+                        copy_model_pred=model_args.get('copy_model_pred', 1))
+
     init_time = time.time() - init_start_time
     
     # Count parameters
@@ -418,18 +433,25 @@ def train_and_eval_minimax(dataset_name, train_args, model_args, x_test, y_test)
     return metrics
 
 
-def evaluate_hyperparameter(dataset_name: str, hyperparam_name: str, hyperparam_values: List[float]):
-    """Evaluate Minimax model with different values of a specific hyperparameter"""
-    
+def evaluate_hyperparameter(dataset_name: str, hyperparam_name: str, hyperparam_values: List[float], binning_method: str = 'equal_freq'):
+    """Evaluate Minimax model with different values of a specific hyperparameter
+
+    Args:
+        dataset_name: Name of dataset ('coat', 'yahoo', or 'kuai')
+        hyperparam_name: Name of hyperparameter to vary
+        hyperparam_values: List of values to test
+        binning_method: Binning strategy to use ('equal_freq' or 'equal_width')
+    """
+
     # Load test data once
     if dataset_name == "coat":
-        train_mat, test_mat = load_data("coat")        
+        train_mat, test_mat = load_data("coat")
         x_test, y_test = rating_mat_to_sample(test_mat)
     elif dataset_name == "yahoo":
         _, _, x_test, y_test = load_data("yahoo")
     elif dataset_name == "kuai":
         _, _, x_test, y_test = load_data("kuai")
-    
+
     # Don't binarize here - train_and_eval_minimax will handle it
     
     # Get default hyperparameters based on dataset
@@ -530,8 +552,8 @@ def evaluate_hyperparameter(dataset_name: str, hyperparam_name: str, hyperparam_
             raise ValueError(f"Unknown hyperparameter: {hyperparam_name}")
         
         # Train and evaluate
-        metrics = train_and_eval_minimax(dataset_name, train_args_copy, model_args_copy, x_test, y_test.copy())
-        
+        metrics = train_and_eval_minimax(dataset_name, train_args_copy, model_args_copy, x_test, y_test.copy(), binning_method=binning_method)
+
         # Add hyperparameter value to results
         result = {hyperparam_name: value}
         result.update(metrics)
@@ -550,31 +572,35 @@ def evaluate_hyperparameter(dataset_name: str, hyperparam_name: str, hyperparam_
 
 def main():
     parser = argparse.ArgumentParser(description='Evaluate Minimax model with different hyperparameters')
-    parser.add_argument('--dataset', type=str, default='yahoo', 
+    parser.add_argument('--dataset', type=str, default='yahoo',
                         choices=['coat', 'yahoo', 'kuai'],
                         help='Dataset to use')
     parser.add_argument('--hyperparam', type=str, required=True,
-                        help='Hyperparameter to vary (e.g., beta, gamma, G, etc.)')
+                        help='Hyperparameter to vary (e.g., beta, gamma, G, num_bins, etc.)')
     parser.add_argument('--values', nargs='+', type=float, required=True,
                         help='List of values to test for the hyperparameter')
+    parser.add_argument('--binning_method', type=str, default='equal_freq',
+                        choices=['equal_freq', 'equal_width'],
+                        help='Binning strategy to use (equal_freq or equal_width)')
     parser.add_argument('--output', type=str, default='minimax_evaluation_results.csv',
                         help='Output CSV file for results')
     parser.add_argument('--seed', type=int, default=2020,
                         help='Random seed')
-    
+
     args = parser.parse_args()
-    
+
     # Set random seeds
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(args.seed)
-    
+
     print(f"Evaluating Minimax on {args.dataset} dataset")
+    print(f"Binning method: {args.binning_method}")
     print(f"Testing {args.hyperparam} with values: {args.values}")
-    
+
     # Run evaluation
-    results_df = evaluate_hyperparameter(args.dataset, args.hyperparam, args.values)
+    results_df = evaluate_hyperparameter(args.dataset, args.hyperparam, args.values, args.binning_method)
     
     # Save results
     results_df.to_csv(args.output, index=False)
@@ -588,10 +614,17 @@ def main():
 if __name__ == "__main__":
     main()
 
-# python real_world/evaluate_minimax.py --dataset yahoo --hyperparam beta --values 0.01 0.1 1 10 100 --output yahoo_beta_evaluation_results.csv
-# python real_world/evaluate_minimax.py --dataset kuai --hyperparam beta --values 0.01 0.1 1 10 100 --output kuai_beta_evaluation_results.csv
-# python real_world/evaluate_minimax.py --dataset coat --hyperparam beta --values 0.01 0.1 1 10 100 --output coat_beta_evaluation_results.csv
+# Example usage for comparing binning methods:
 
-# python real_world/evaluate_minimax.py --dataset yahoo --hyperparam num_bins --values 1 3 5 8 10 12 15 18 20 25 30 35 40 45 --output yahoo_num_bins_evaluation_results.csv
-# python real_world/evaluate_minimax.py --dataset kuai --hyperparam num_bins --values 1 3 5 8 10 12 15 18 20 25 30 35 40 45 --output kuai_num_bins_evaluation_results.csv
-# python real_world/evaluate_minimax.py --dataset coat --hyperparam num_bins --values 1 3 5 8 10 12 15 18 20 25 30 35 40 45 --output coat_num_bins_evaluation_results.csv
+# Equal-Frequency Binning (default - current method)
+# python real_world/evaluate_minimax.py --dataset coat --hyperparam num_bins --values 5 10 15 20 25 30 --binning_method equal_freq --output coat_equal_freq_results.csv
+# python real_world/evaluate_minimax.py --dataset yahoo --hyperparam num_bins --values 5 10 15 20 25 30 --binning_method equal_freq --output yahoo_equal_freq_results.csv
+# python real_world/evaluate_minimax.py --dataset kuai --hyperparam num_bins --values 5 10 15 20 25 30 --binning_method equal_freq --output kuai_equal_freq_results.csv
+
+# Equal-Width Binning (new method for comparison)
+# python real_world/evaluate_minimax.py --dataset coat --hyperparam num_bins --values 5 10 15 20 25 30 --binning_method equal_width --output coat_equal_width_results.csv
+# python real_world/evaluate_minimax.py --dataset yahoo --hyperparam num_bins --values 5 10 15 20 25 30 --binning_method equal_width --output yahoo_equal_width_results.csv
+# python real_world/evaluate_minimax.py --dataset kuai --hyperparam num_bins --values 5 10 15 20 25 30 --binning_method equal_width --output kuai_equal_width_results.csv
+
+# Other hyperparameter examples:
+# python real_world/evaluate_minimax.py --dataset yahoo --hyperparam beta --values 0.01 0.1 1 10 100 --output yahoo_beta_evaluation_results.csv

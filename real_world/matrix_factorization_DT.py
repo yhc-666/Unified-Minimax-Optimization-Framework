@@ -111,7 +111,7 @@ class VAECF(nn.Module):
     - Efficient pair-wise prediction without full matrix computation
     """
     def __init__(self, num_users, num_items, batch_size, embedding_k=64,
-                 latent_dim=None, hidden_dims=(600, 200), use_kl=False, kl_beta=0.2,
+                 latent_dim=None, hidden_dims=(60, 20), use_kl=False, kl_beta=0.2,
                  *args, **kwargs):
         super(VAECF, self).__init__()
 
@@ -1596,31 +1596,60 @@ def sharpen(x, T):
 def equal_frequency_binning(data, quantiles, n_bins=4):
     """
     Perform equal frequency binning on input data
-    
+
     Args:
         data (torch.Tensor): Input 1D data (propensity scores)
         quantiles (torch.Tensor): Quantile values (e.g., [0.1, 0.2, ..., 0.9] for 10 bins)
         n_bins (int): Number of bins
-    
+
     Returns:
         bin_indices (torch.Tensor): Bin index for each element (0 to n_bins-1)
         full_boundaries (torch.Tensor): Bin boundaries (length n_bins+1)
     """
     # Calculate boundaries at the quantile points
     boundaries = torch.quantile(data, quantiles).to(data.device)
-    
+
     # Construct full boundaries (including min and max)
     full_boundaries = torch.cat([
-        torch.tensor([float('-inf')]).to(data.device), 
-        boundaries, 
+        torch.tensor([float('-inf')]).to(data.device),
+        boundaries,
         torch.tensor([float('inf')]).to(data.device)
     ])
-    
+
     # Assign bin indices (0 ~ n_bins-1)
     bin_indices = torch.bucketize(data, full_boundaries, right=True) - 1
-    
+
     # Return bin indices and boundaries
     return bin_indices, full_boundaries[1:-1]  # Remove infinity boundaries
+
+
+def equal_width_binning(data, n_bins=4):
+    """
+    Perform equal width binning on input data
+
+    Args:
+        data (torch.Tensor): Input 1D data (propensity scores)
+        n_bins (int): Number of bins
+
+    Returns:
+        bin_indices (torch.Tensor): Bin index for each element (0 to n_bins-1)
+        full_boundaries (torch.Tensor): Bin boundaries (length n_bins-1, excluding 0 and 1)
+    """
+    # Create equal-width bins from 0 to 1
+    boundaries = torch.linspace(0, 1, n_bins + 1, device=data.device)
+
+    # Construct full boundaries (including -inf and +inf for consistency)
+    full_boundaries = torch.cat([
+        torch.tensor([float('-inf')]).to(data.device),
+        boundaries[1:-1],  # Exclude 0 and 1, use inner boundaries only
+        torch.tensor([float('inf')]).to(data.device)
+    ])
+
+    # Assign bin indices (0 ~ n_bins-1)
+    bin_indices = torch.bucketize(data, full_boundaries, right=True) - 1
+
+    # Return bin indices and boundaries (excluding -inf and +inf)
+    return bin_indices, full_boundaries[1:-1]
 
 
 class logistic_regression(nn.Module):    
@@ -2123,6 +2152,364 @@ class MF_Minimax(nn.Module):
             
         return epoch
     
+    def predict(self, x):
+        x_tensor = torch.LongTensor(x).to(self.device)
+        pred = self.model_pred.predict(x_tensor)
+        return pred.detach().cpu().numpy()
+
+
+class MF_Minimax_EqualWidth(nn.Module):
+    """
+    MF_Minimax with Equal-Width Binning instead of Equal-Frequency Binning
+    """
+    def __init__(self, num_users, num_items, batch_size, batch_size_prop, embedding_k=4, embedding_k1=8,
+                 abc_model_name='logistic_regression', copy_model_pred=1, pred_model_name='MF',
+                 use_kl=False, kl_beta=0.2, *args, **kwargs):
+        super().__init__()
+        self.num_users = num_users
+        self.num_items = num_items
+        self.embedding_k = embedding_k
+        self.embedding_k1 = embedding_k1
+        self.batch_size = batch_size
+        self.batch_size_prop = batch_size_prop
+        self.pred_model_name = pred_model_name
+
+        # Use MF, NCF, or VAECF for both prediction and imputation models
+        if pred_model_name == 'NCF':
+            self.model_pred = NCF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1)
+            self.model_impu = NCF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1)
+        elif pred_model_name == 'VAECF':
+            self.model_pred = VAECF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1,
+                                   use_kl=use_kl, kl_beta=kl_beta)
+            self.model_impu = VAECF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1,
+                                   use_kl=use_kl, kl_beta=kl_beta)
+        else:  # Default to MF
+            self.model_pred = MF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1)
+            self.model_impu = MF(self.num_users, self.num_items, self.batch_size, embedding_k=self.embedding_k1)
+
+        # Use logistic_regression for propensity
+        self.model_prop = logistic_regression(self.num_users, self.num_items, embedding_k=self.embedding_k)
+
+        # Use logistic_regression or mlp for abc
+        if abc_model_name == 'logistic_regression':
+            self.model_abc = logistic_regression(self.num_users, self.num_items, embedding_k=self.embedding_k)
+        elif abc_model_name == 'mlp':
+            self.model_abc = mlp(self.num_users, self.num_items, embedding_k=self.embedding_k)
+
+        # Copy model weights if specified
+        if copy_model_pred == 1:
+            self.model_impu.load_state_dict(self.model_pred.state_dict())
+
+        # Move to cuda if available
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.model_pred.to(self.device)
+        self.model_impu.to(self.device)
+        self.model_prop.to(self.device)
+        self.model_abc.to(self.device)
+
+        self.sigmoid = torch.nn.Sigmoid()
+        self.xent_func = torch.nn.BCELoss()
+
+    def _compute_IPS(self, x, num_epoch=1000, lr=0.05, lamb=1e-5, tol=1e-4, verbose=False):
+        print('Stage1: computing_IPS', lr, lamb)
+
+        # Generate obs from x
+        obs = sps.csr_matrix((np.ones(x.shape[0]), (x[:, 0], x[:, 1])),
+                            shape=(self.num_users, self.num_items), dtype=np.float32).toarray().reshape(-1)
+
+        optimizer_propensity = torch.optim.Adam(self.model_prop.parameters(), lr=lr, weight_decay=lamb)
+
+        num_samples = len(obs)
+        total_batch = num_samples // self.batch_size_prop
+        x_all = generate_total_sample(self.num_users, self.num_items)
+
+        last_loss = 1e9
+        early_stop = 0
+        stop = 5
+
+        for epoch in tqdm(range(num_epoch), desc="Computing IPS (EqualWidth)", disable=not verbose):
+            ul_idxs = np.arange(x_all.shape[0])
+            np.random.shuffle(ul_idxs)
+
+            epoch_loss = 0
+            for idx in range(total_batch):
+                x_all_idx = ul_idxs[idx*self.batch_size_prop: (idx+1)*self.batch_size_prop]
+
+                x_sampled = x_all[x_all_idx]
+                prop = self.model_prop(torch.LongTensor(x_sampled).to(self.device))
+
+                sub_obs = obs[x_all_idx]
+                sub_obs = torch.Tensor(sub_obs).to(self.device)
+
+                prop_loss = F.mse_loss(prop, sub_obs)
+
+                optimizer_propensity.zero_grad()
+                prop_loss.backward()
+                optimizer_propensity.step()
+
+                epoch_loss += prop_loss.detach().cpu().numpy()
+
+            relative_loss_div = (last_loss - epoch_loss) / (last_loss + 1e-12)
+            if  relative_loss_div < tol:
+                if early_stop > stop:
+                    if verbose:
+                        print("[Minimax-EqualWidth-PS] epoch:{}, xent:{}".format(epoch, epoch_loss))
+                    return epoch
+                else:
+                    early_stop += 1
+
+            last_loss = epoch_loss
+
+            if epoch % 10 == 0 and verbose:
+                print("[Minimax-EqualWidth-PS] epoch:{}, xent:{}".format(epoch, epoch_loss))
+
+        return epoch
+
+    def fit(self, x, y, x_test=None, y_test=None, G=4, alpha=1, beta=1, theta=1, num_epoch=1000,
+            pred_lr=0.05, impu_lr=0.05, prop_lr=0.05, dis_lr=0.05,
+            lamb_prop=0, lamb_pred=0, lamb_imp=0, dis_lamb=0, gamma=0.05, num_bins=10,
+            tol=1e-4, verbose=True, early_stop_patience=20, early_stop_min_delta=1e-4,
+            eval_freq=10, progress_callback=None):
+        """
+        Train the MF_Minimax_EqualWidth model using equal-width binning strategy
+        """
+
+        print('Stage2: fitting (EqualWidth)', G, alpha, beta, theta, gamma, num_bins, pred_lr, impu_lr, prop_lr, dis_lr, lamb_prop, lamb_pred, lamb_imp, dis_lamb)
+
+        # Initialize VAECF user history if using VAECF
+        if self.pred_model_name == 'VAECF':
+            if verbose:
+                print("[Minimax-EqualWidth] Initializing VAECF user history from training data...")
+            self.model_pred.set_user_hist_from_pairs(x, y)
+            self.model_impu.set_user_hist_from_pairs(x, y)
+            if verbose:
+                print("[Minimax-EqualWidth] VAECF user history initialized successfully")
+
+        # Create optimizers
+        optimizer_prediction = torch.optim.Adam(self.model_pred.parameters(), lr=pred_lr, weight_decay=lamb_pred)
+        optimizer_imputation = torch.optim.Adam(self.model_impu.parameters(), lr=impu_lr, weight_decay=lamb_imp)
+        optimizer_propensity = torch.optim.Adam(self.model_prop.parameters(), lr=prop_lr, weight_decay=lamb_prop)
+        optimizer_dis = torch.optim.Adam(self.model_abc.parameters(), lr=dis_lr, weight_decay=dis_lamb)
+
+        # Generate all samples and obs
+        x_all = generate_total_sample(self.num_users, self.num_items)
+        obs = sps.csr_matrix((np.ones(len(y)), (x[:, 0], x[:, 1])),
+                            shape=(self.num_users, self.num_items), dtype=np.float32).toarray().reshape(-1)
+
+        num_samples = len(x)
+        total_batch = num_samples // self.batch_size
+
+        last_loss = 1e9
+        early_stop = 0
+        stop = 5
+
+        # Initialize early stopping variables
+        use_early_stopping = x_test is not None and y_test is not None
+        if use_early_stopping:
+            from sklearn.metrics import roc_auc_score
+            best_test_auc = -float('inf')
+            patience_counter = 0
+            best_epoch = 0
+            best_model_states = {
+                'pred': self.model_pred.state_dict(),
+                'impu': self.model_impu.state_dict(),
+                'prop': self.model_prop.state_dict(),
+                'abc': self.model_abc.state_dict()
+            }
+            if verbose:
+                print(f"Early stopping enabled: patience={early_stop_patience}, min_delta={early_stop_min_delta}, eval_freq={eval_freq}")
+
+        for epoch in tqdm(range(num_epoch), desc="Training Minimax (EqualWidth)", disable=not verbose):
+            all_idx = np.arange(num_samples)
+            np.random.shuffle(all_idx)
+            ul_idxs = np.arange(x_all.shape[0])
+            np.random.shuffle(ul_idxs)
+
+            epoch_loss = 0
+            for idx in range(total_batch):
+                # data prepare
+                selected_idx = all_idx[idx*self.batch_size:(idx+1)*self.batch_size]
+                sub_x = x[selected_idx]
+                sub_y = y[selected_idx]
+                sub_x_tensor = torch.LongTensor(sub_x).to(self.device)
+                sub_y_tensor = torch.Tensor(sub_y).to(self.device)
+
+                # Add bounds checking
+                start_idx = G * idx * self.batch_size
+                end_idx = min(G * (idx + 1) * self.batch_size, len(ul_idxs))
+
+                if start_idx >= len(ul_idxs):
+                    break
+
+                x_all_idx = ul_idxs[start_idx:end_idx]
+
+                if len(x_all_idx) == 0:
+                    continue
+
+                x_sampled = x_all[x_all_idx]
+                x_sampled_tensor = torch.LongTensor(x_sampled).to(self.device)
+                obs_sampled = torch.Tensor(obs[x_all_idx]).to(self.device)
+
+                # propensity model
+                prop_sampled = self.model_prop(x_sampled_tensor)
+                with torch.no_grad():
+                    prop_user_emb, prop_item_emb = self.model_prop.get_emb(x_sampled_tensor)
+
+                # Use EQUAL-WIDTH binning (key difference from MF_Minimax)
+                bin_indices, full_boundaries = equal_width_binning(prop_sampled.detach(), n_bins=num_bins)
+                bin_indices = torch.clamp(bin_indices, 0, num_bins - 1)
+
+                bin_sum_index = torch.nn.functional.one_hot(bin_indices.long(), num_classes=int(num_bins)).float()
+
+                # Pass embeddings to ABC model
+                prop_error_dis = self.model_abc(prop_user_emb.detach(), prop_item_emb.detach()) * (obs_sampled - prop_sampled.detach())
+                bin_prop_error_dis = torch.matmul(prop_error_dis.unsqueeze(0), bin_sum_index).squeeze(0)
+
+                prop_abc_loss_dis = - bin_prop_error_dis.abs().sum() / float(num_samples)
+
+                optimizer_dis.zero_grad()
+                prop_abc_loss_dis.backward()
+                optimizer_dis.step()
+
+
+                prop_error_prop = self.model_abc.predict(prop_user_emb.detach(), prop_item_emb.detach()).detach() * (obs_sampled - prop_sampled)
+                bin_prop_error_prop = torch.matmul(prop_error_prop.unsqueeze(0), bin_sum_index).squeeze(0)
+
+                prop_abc_loss_prop = bin_prop_error_prop.abs().sum() / float(num_samples)
+
+                prop_nll_loss = F.binary_cross_entropy(prop_sampled, obs_sampled, reduction='mean')
+
+                prop_loss = prop_nll_loss + beta * prop_abc_loss_prop
+
+                optimizer_propensity.zero_grad()
+                prop_loss.backward()
+                optimizer_propensity.step()
+
+                # prediction model
+                inv_prop = 1.0 / torch.clip(self.model_prop.predict(sub_x_tensor), gamma, 1.0)
+
+                pred = self.model_pred(sub_x_tensor)
+                imputation_y = self.model_impu.predict(sub_x_tensor)
+
+                pred_u = self.model_pred(x_sampled_tensor)
+                imputation_y1 = self.model_impu.predict(x_sampled_tensor)
+
+                xent_loss = F.binary_cross_entropy(pred, sub_y_tensor, weight=inv_prop.detach(), reduction='sum')
+                imputation_loss = F.binary_cross_entropy(pred, imputation_y.detach(), reduction='sum')
+
+                ips_loss = (xent_loss - imputation_loss)
+
+                direct_loss = F.binary_cross_entropy(pred_u, imputation_y1.detach(), reduction='sum')
+
+                dr_loss = (ips_loss + direct_loss) / float(x_sampled.shape[0])
+
+                # Add KL loss for VAECF
+                if hasattr(self.model_pred, 'get_kl_loss'):
+                    kl_loss_pred = self.model_pred.get_kl_loss()
+                    dr_loss = dr_loss + self.model_pred.kl_beta * kl_loss_pred
+
+                optimizer_prediction.zero_grad()
+                dr_loss.backward()
+                optimizer_prediction.step()
+
+                # imputation model
+                pred = self.model_pred.predict(sub_x_tensor)
+                imputation_y = self.model_impu(sub_x_tensor)
+
+                e_loss = F.binary_cross_entropy(pred.detach(), sub_y_tensor, reduction='none')
+                e_hat_loss = F.binary_cross_entropy(imputation_y, pred.detach(), reduction='none')
+
+                imp_loss = torch.sum(((e_loss - e_hat_loss) ** 2) * inv_prop.detach()) / float(x_sampled.shape[0])
+
+                # Add KL loss for VAECF
+                if hasattr(self.model_impu, 'get_kl_loss'):
+                    kl_loss_impu = self.model_impu.get_kl_loss()
+                    imp_loss = imp_loss + self.model_impu.kl_beta * kl_loss_impu
+
+                optimizer_imputation.zero_grad()
+                imp_loss.backward()
+                optimizer_imputation.step()
+
+                epoch_loss += xent_loss.detach().cpu().numpy()
+
+            relative_loss_div = (last_loss - epoch_loss) / (last_loss + 1e-12)
+            if  relative_loss_div < tol:
+                if early_stop > stop:
+                    if verbose:
+                        print("[Minimax-EqualWidth] epoch:{}, xent:{}".format(epoch, epoch_loss))
+                    return epoch
+                else:
+                    early_stop += 1
+
+            last_loss = epoch_loss
+
+            # Variables to track for callback
+            current_train_auc = None
+            current_test_auc = None
+
+            # Calculate train AUC periodically for callback
+            if progress_callback and (epoch + 1) % eval_freq == 0:
+                with torch.no_grad():
+                    train_pred = self.predict(x)
+                    current_train_auc = roc_auc_score(y, train_pred)
+
+            # Early stopping based on test AUC
+            if use_early_stopping and (epoch + 1) % eval_freq == 0:
+                with torch.no_grad():
+                    test_pred = self.predict(x_test)
+                    test_auc = roc_auc_score(y_test, test_pred)
+                    current_test_auc = test_auc
+
+                if test_auc > best_test_auc + early_stop_min_delta:
+                    best_test_auc = test_auc
+                    best_epoch = epoch
+                    patience_counter = 0
+                    best_model_states = {
+                        'pred': self.model_pred.state_dict(),
+                        'impu': self.model_impu.state_dict(),
+                        'prop': self.model_prop.state_dict(),
+                        'abc': self.model_abc.state_dict()
+                    }
+                    if verbose:
+                        print(f"[Minimax-EqualWidth] epoch:{epoch}, xent:{epoch_loss:.4f}, test_auc:{test_auc:.4f} (best)")
+                else:
+                    patience_counter += 1
+                    if verbose:
+                        print(f"[Minimax-EqualWidth] epoch:{epoch}, xent:{epoch_loss:.4f}, test_auc:{test_auc:.4f} (patience: {patience_counter}/{early_stop_patience})")
+
+                if patience_counter >= early_stop_patience:
+                    if verbose:
+                        print(f"[Minimax-EqualWidth] Early stopping triggered at epoch {epoch}. Best epoch: {best_epoch} with test AUC: {best_test_auc:.4f}")
+                    self.model_pred.load_state_dict(best_model_states['pred'])
+                    self.model_impu.load_state_dict(best_model_states['impu'])
+                    self.model_prop.load_state_dict(best_model_states['prop'])
+                    self.model_abc.load_state_dict(best_model_states['abc'])
+                    return best_epoch
+
+            elif epoch % 10 == 0 and verbose:
+                print("[Minimax-EqualWidth] epoch:{}, xent:{}".format(epoch, epoch_loss))
+
+            # Call progress callback if provided
+            if progress_callback:
+                progress_callback(
+                    epoch=epoch,
+                    total_epochs=num_epoch,
+                    loss=epoch_loss,
+                    train_auc=current_train_auc,
+                    test_auc=current_test_auc
+                )
+
+        # If we complete all epochs and early stopping was used, restore best model
+        if use_early_stopping and best_epoch < epoch:
+            if verbose:
+                print(f"[Minimax-EqualWidth] Training completed. Restoring best model from epoch {best_epoch} with test AUC: {best_test_auc:.4f}")
+            self.model_pred.load_state_dict(best_model_states['pred'])
+            self.model_impu.load_state_dict(best_model_states['impu'])
+            self.model_prop.load_state_dict(best_model_states['prop'])
+            self.model_abc.load_state_dict(best_model_states['abc'])
+
+        return epoch
+
     def predict(self, x):
         x_tensor = torch.LongTensor(x).to(self.device)
         pred = self.model_pred.predict(x_tensor)

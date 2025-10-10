@@ -5,7 +5,7 @@ Generate the simulated prediction conversion rate matrix.
 import pickle
 import numpy as np
 
-file = open("semi-synthetic/data/predicted_matrix", "rb")
+file = open("semi-synthetic/data_vaecf/predicted_matrix", "rb")
 prediction = np.array(pickle.load(file), dtype=float)
 user_num = pickle.load(file)
 item_num = pickle.load(file)
@@ -68,7 +68,7 @@ print(ground_truth[:20])
 # print(crs[:20])
 # print(ground_truth[:20])
 
-file = open("semi-synthetic/data/synthetic_data", "wb")
+file = open("semi-synthetic/data_vaecf/synthetic_data", "wb")
 pickle.dump(ground_truth, file)
 # pickle.dump(one, file)
 # pickle.dump(three, file)

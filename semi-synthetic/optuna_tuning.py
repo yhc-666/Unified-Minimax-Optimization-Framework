@@ -74,7 +74,9 @@ def create_trial_params(trial: optuna.Trial, model_name: str, args) -> Dict[str,
         'test_ratio': args.test_ratio,
         'unbiased_test_ratio': args.unbiased_test_ratio,
         'seed': args.seed,
-        'save_results': None  # Don't save individual results during optimization
+        'save_results': None,  # Don't save individual results during optimization
+        'data_dir': args.data_dir,
+        'propensity_p': args.propensity_p
     }
     
     # Model-specific parameters
@@ -245,7 +247,7 @@ def parse_args():
                        choices=['MF_DR_JL', 'MF_MRDR_JL', 'MF_Minimax', 'MF_DR_BIAS', 'MF_DR_BMSE', 'MF_DR_DCE'],
                        help='Model to optimize')
     parser.add_argument('--objective', type=str, required=True,
-                       choices=['ECE', 'BMSE', 'DR_Bias', 'DR_Variance', 'MSE'],
+                       choices=['ECE', 'BMSE', 'DR_Bias', 'DR_Variance', 'MSE', 'AUC', 'NDCG@5'],
                        help='Objective metric to optimize')
     parser.add_argument('--direction', type=str, default='minimize',
                        choices=['minimize', 'maximize'],
@@ -266,6 +268,10 @@ def parse_args():
                        help='Ratio of test set to use as unbiased sample')
     parser.add_argument('--seed', type=int, default=2024,
                        help='Random seed')
+    parser.add_argument('--data_dir', type=str, default='data',
+                       help='Data directory (e.g., "data", "data_ncf", "data_vaecf")')
+    parser.add_argument('--propensity_p', type=float, default=0.6,
+                       help='Propensity parameter (0.5 or 0.6)')
     
     # Output settings
     parser.add_argument('--save_all_trials', action='store_true',
@@ -300,7 +306,11 @@ def main():
     
     # Load data once
     print("\nLoading data...")
-    ground_truth, propensity, num_users, num_items = load_data(verbose=False)
+    ground_truth, propensity, num_users, num_items = load_data(
+        data_dir=args.data_dir,
+        p=args.propensity_p,
+        verbose=False
+    )
     
     # Create train/test splits once
     print("Creating train/test splits...")

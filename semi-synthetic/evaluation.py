@@ -13,6 +13,7 @@ import torch
 import torch.nn as nn
 import pandas as pd
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import roc_auc_score
 from typing import Tuple, Dict
 import warnings
 warnings.filterwarnings('ignore')
@@ -22,6 +23,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import models from real_world
 from real_world.matrix_factorization_DT import MF_DR_JL, MF_MRDR_JL, MF_Minimax, MF_DR_BIAS, MF_DR_BMSE, MF_DR_DCE, MF_DR_JL_CE
+from real_world.utils import ndcg_func
 
 # ----------- util functions for 4 error metrics ------------
 # 1. ECE
@@ -168,41 +170,48 @@ def get_phi_normalized(model, x, device='cuda'):
 
 # ------------ Util functions ends ------------
 
-def load_data(data_dir: str = "data", verbose: bool = True) -> Tuple[np.ndarray, np.ndarray, int, int]:
-    """Load ground truth data and compute propensity scores."""
+def load_data(data_dir: str = "data", p: float = 0.6, verbose: bool = True) -> Tuple[np.ndarray, np.ndarray, int, int]:
+    """Load ground truth data and compute propensity scores.
+
+    Args:
+        data_dir: Directory containing the data files
+        p: Propensity parameter (default: 0.6, can also use 0.5)
+        verbose: Whether to print loading information
+    """
     # Load ground truth
     # Check if we're in the semi-synthetic directory or parent directory
-    if os.path.exists("data/synthetic_data"):
-        synthetic_path = "data/synthetic_data"
-        predicted_path = "data/predicted_matrix"
+    if os.path.exists(f"{data_dir}/synthetic_data"):
+        synthetic_path = f"{data_dir}/synthetic_data"
+        predicted_path = f"{data_dir}/predicted_matrix"
     else:
-        synthetic_path = "semi-synthetic/data/synthetic_data"
-        predicted_path = "semi-synthetic/data/predicted_matrix"
-    
+        synthetic_path = f"semi-synthetic/{data_dir}/synthetic_data"
+        predicted_path = f"semi-synthetic/{data_dir}/predicted_matrix"
+
     with open(synthetic_path, "rb") as f:
         ground_truth = pickle.load(f)
-    
+
     # Load dimensions
     with open(predicted_path, "rb") as f:
         _ = pickle.load(f)  # predictions (not used)
         num_users = pickle.load(f)
         num_items = pickle.load(f)
-    
-    # Calculate propensity scores with correct formula
+
+    # Calculate propensity scores with configurable p parameter
     propensity = np.copy(ground_truth)
-    p = 0.6
-    propensity[np.where(propensity == 0.9)] = p ** 1  # 0.5
-    propensity[np.where(propensity == 0.7)] = p ** 2  # 0.25
-    propensity[np.where(propensity == 0.5)] = p ** 3  # 0.125
-    propensity[np.where(propensity == 0.3)] = p ** 4  # 0.0625
-    propensity[np.where(propensity == 0.1)] = p ** 4  # 0.0625
-    
+    propensity[np.where(propensity == 0.9)] = p ** 1
+    propensity[np.where(propensity == 0.7)] = p ** 2
+    propensity[np.where(propensity == 0.5)] = p ** 3
+    propensity[np.where(propensity == 0.3)] = p ** 4
+    propensity[np.where(propensity == 0.1)] = p ** 4
+
     if verbose:
-        print(f"Loaded data: {num_users} users, {num_items} items")
+        print(f"Loaded data from: {data_dir}")
+        print(f"Propensity parameter p: {p}")
+        print(f"Data: {num_users} users, {num_items} items")
         print(f"Ground truth shape: {ground_truth.shape}")
         print(f"Ground truth unique values: {np.unique(ground_truth)}")
         print(f"Propensity unique values: {np.unique(propensity)}")
-    
+
     return ground_truth, propensity, num_users, num_items
 
 
@@ -465,11 +474,28 @@ def train_and_evaluate_model(model_name: str, data_splits: Dict, args) -> Tuple[
 
     # 4. DR Variance
     dr_variance = compute_dr_variance_torch(p_test_torch, hat_p_test_torch, y_test_torch, y_pred_torch)
-    
+
     # Additional metrics
     mse = torch.mean((y_pred_torch - y_test_torch)**2).item()
     mae = torch.mean(torch.abs(y_pred_torch - y_test_torch)).item()
-    
+
+    # 5. AUC computation
+    try:
+        auc = roc_auc_score(y_test_binary, y_pred)
+    except Exception as e:
+        if args.verbose:
+            print(f"Warning: AUC computation failed: {e}")
+        auc = float('nan')
+
+    # 6. NDCG@5 computation
+    try:
+        ndcg_results = ndcg_func(model, x_test, y_test_binary, top_k_list=[5])
+        ndcg_5 = np.mean(ndcg_results['ndcg_5'])
+    except Exception as e:
+        if args.verbose:
+            print(f"Warning: NDCG@5 computation failed: {e}")
+        ndcg_5 = float('nan')
+
     metrics = {
         'model': model_name,
         'ECE': ece.item(),
@@ -477,7 +503,9 @@ def train_and_evaluate_model(model_name: str, data_splits: Dict, args) -> Tuple[
         'DR_Bias': dr_bias.item(),
         'DR_Variance': dr_variance.item(),
         'MSE': mse,
-        'MAE': mae
+        'MAE': mae,
+        'AUC': auc,
+        'NDCG@5': ndcg_5
     }
     
     print(f"\nResults for {model_name}:")
@@ -487,6 +515,8 @@ def train_and_evaluate_model(model_name: str, data_splits: Dict, args) -> Tuple[
     print(f"DR Variance: {metrics['DR_Variance']:.9f}")
     print(f"MSE: {metrics['MSE']:.6f}")
     print(f"MAE: {metrics['MAE']:.6f}")
+    print(f"AUC: {metrics['AUC']:.6f}" if not np.isnan(metrics['AUC']) else "AUC: N/A")
+    print(f"NDCG@5: {metrics['NDCG@5']:.6f}" if not np.isnan(metrics['NDCG@5']) else "NDCG@5: N/A")
     
     return model, y_pred, metrics
 
@@ -533,7 +563,11 @@ def main():
                        help='Show training progress')
     parser.add_argument('--seed', type=int, default=2024,
                        help='Random seed')
-    
+    parser.add_argument('--data_dir', type=str, default='data',
+                       help='Data directory (e.g., "data", "data_ncf_p0.5", "data_vaecf_p0.5")')
+    parser.add_argument('--propensity_p', type=float, default=0.6,
+                       help='Propensity parameter (0.5 or 0.6)')
+
     args = parser.parse_args()
     
     # Set random seeds
@@ -551,7 +585,11 @@ def main():
     
     # Load data
     print("\nLoading data...")
-    ground_truth, propensity, num_users, num_items = load_data(verbose=args.verbose)
+    ground_truth, propensity, num_users, num_items = load_data(
+        data_dir=args.data_dir,
+        p=args.propensity_p,
+        verbose=args.verbose
+    )
     
     # Create train/test splits
     print("\nCreating train/test splits...")
