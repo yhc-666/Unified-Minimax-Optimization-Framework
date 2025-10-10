@@ -144,7 +144,8 @@ def get_phi_normalized(model, x, device='cuda'):
                 logits = torch.sum(U_emb.mul(V_emb), 1)
             else:
                 # Fallback: use forward and compute inverse sigmoid
-                output = model.forward(x)
+                x_tensor_for_forward = torch.LongTensor(x).to(device)
+                output = model.forward(x_tensor_for_forward)
                 if not torch.is_tensor(output):
                     output = torch.tensor(output, device=device, dtype=torch.float32)
                 else:
