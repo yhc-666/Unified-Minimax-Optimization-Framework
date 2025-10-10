@@ -305,12 +305,18 @@ class MF_BaseModel(nn.Module):
         item_idx = torch.LongTensor(x[:, 1]).to(self.device)
         U_emb = self.W(user_idx)
         V_emb = self.H(item_idx)
-        
+
         return U_emb, V_emb
 
     def predict(self, x):
         pred = self.forward(x)
         return pred.detach().cpu()
+
+    def to(self, device):
+        """Override to() to update self.device attribute"""
+        super(MF_BaseModel, self).to(device)
+        self.device = device if isinstance(device, torch.device) else torch.device(device)
+        return self
 
 
 class NCF_BaseModel(nn.Module):
@@ -369,12 +375,18 @@ class NCF_BaseModel(nn.Module):
         item_idx = torch.LongTensor(x[:, 1]).to(self.device)
         U_emb = self.W(user_idx)
         V_emb = self.H(item_idx)
-        
+
         return U_emb, V_emb
-        
+
     def predict(self, x):
         pred = self.forward(x)
         return pred.detach().cpu()
+
+    def to(self, device):
+        """Override to() to update self.device attribute"""
+        super(NCF_BaseModel, self).to(device)
+        self.device = device if isinstance(device, torch.device) else torch.device(device)
+        return self
 
 
 class Embedding_Sharing(nn.Module):
@@ -750,11 +762,20 @@ class MF_DR_JL(nn.Module):
 
             if epoch == num_epoch - 1:
                 print("[MF-DR-JL] Reach preset epochs, it seems does not converge.")
-    
+
     def predict(self, x):
         pred = self.prediction_model.predict(x)
         return pred.detach().cpu().numpy()
-    
+
+    def to(self, device):
+        """Override to() to update self.device and child models' devices"""
+        super(MF_DR_JL, self).to(device)
+        self.device = device if isinstance(device, torch.device) else torch.device(device)
+        # Update child models
+        self.prediction_model.to(device)
+        self.imputation_model.to(device)
+        self.propensity_model.to(device)
+        return self
 
 
 class MF_DR_DCE(nn.Module):
@@ -976,11 +997,20 @@ class MF_DR_DCE(nn.Module):
 
             if epoch == num_epoch - 1:
                 print("[MF-DR-DCE] Reach preset epochs, it seems does not converge.")
-    
     def predict(self, x):
         """Make predictions for user-item pairs"""
         pred = self.prediction_model.predict(x)
         return pred.detach().cpu().numpy()
+
+    def to(self, device):
+        """Override to() to update self.device and child models' devices"""
+        super(MF_DR_DCE, self).to(device)
+        self.device = device if isinstance(device, torch.device) else torch.device(device)
+        # Update child models
+        self.prediction_model.to(device)
+        self.imputation_model.to(device)
+        self.propensity_model.to(device)
+        return self
 
 
 class MF_DR_BMSE(MF_DR_JL):
@@ -1319,12 +1349,21 @@ class MF_MRDR_JL(nn.Module):
 
             if epoch == num_epoch - 1:
                 print("[MF-MRDR-JL] Reach preset epochs, it seems does not converge.")
-                
-    
+
     def predict(self, x):
         pred = self.prediction_model.predict(x)
-        return pred.detach().cpu().numpy()            
-        
+        return pred.detach().cpu().numpy()
+
+    def to(self, device):
+        """Override to() to update self.device and child models' devices"""
+        super(MF_MRDR_JL, self).to(device)
+        self.device = device if isinstance(device, torch.device) else torch.device(device)
+        # Update child models
+        self.prediction_model.to(device)
+        self.imputation_model.to(device)
+        self.propensity_model.to(device)
+        return self
+
 
 # timing expriment
 # DR-BIAS 
@@ -1504,12 +1543,19 @@ class MF_DR_BIAS(nn.Module):
             last_loss = epoch_loss
 
             if epoch == num_epoch - 1:
-                print("[MF-DR-BIAS-PS] Reach preset epochs, it seems does not converge.")  
-    
-    
+                print("[MF-DR-BIAS-PS] Reach preset epochs, it seems does not converge.")
 
-        
-    
+    def to(self, device):
+        """Override to() to update self.device and child models' devices"""
+        super(MF_DR_BIAS, self).to(device)
+        self.device = device if isinstance(device, torch.device) else torch.device(device)
+        # Update child models
+        self.prediction_model.to(device)
+        self.imputation.to(device)
+        self.propensity_model.to(device)
+        return self
+
+
 def compute_ece_loss(props, obs, n_bins=10):
     """
     Compute Expected Calibration Error loss for propensity scores
@@ -2151,11 +2197,22 @@ class MF_Minimax(nn.Module):
             self.model_abc.load_state_dict(best_model_states['abc'])
             
         return epoch
-    
+
     def predict(self, x):
         x_tensor = torch.LongTensor(x).to(self.device)
         pred = self.model_pred.predict(x_tensor)
         return pred.detach().cpu().numpy()
+
+    def to(self, device):
+        """Override to() to update self.device and child models' devices"""
+        super(MF_Minimax, self).to(device)
+        self.device = device if isinstance(device, torch.device) else torch.device(device)
+        # Update child models
+        self.model_pred.to(device)
+        self.model_impu.to(device)
+        self.model_prop.to(device)
+        self.model_abc.to(device)
+        return self
 
 
 class MF_Minimax_EqualWidth(nn.Module):
