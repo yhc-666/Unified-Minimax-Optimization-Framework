@@ -60,6 +60,10 @@ class VAECF(nn.Module):
 
         self._user_hist_dense = user_hist
 
+        # Move to same device as model parameters
+        device = next(self.parameters()).device
+        self._user_hist_dense = self._user_hist_dense.to(device)
+
     def encode(self, user_hist):
         """
         Encode user interaction history to latent representation.
