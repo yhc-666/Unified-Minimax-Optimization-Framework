@@ -42,6 +42,7 @@ class ProgressCallback:
         self.direction = direction
         self.best_value = float('inf') if direction == 'minimize' else float('-inf')
         self.best_trial = None
+        self.best_trial_metrics = None
         self.trial_bar = None
 
     def __call__(self, study: optuna.Study, trial: optuna.trial.FrozenTrial):
@@ -52,10 +53,12 @@ class ProgressCallback:
                 if trial.value < self.best_value:
                     self.best_value = trial.value
                     self.best_trial = trial.number
+                    self.best_trial_metrics = trial.user_attrs.copy()
             else:
                 if trial.value > self.best_value:
                     self.best_value = trial.value
                     self.best_trial = trial.number
+                    self.best_trial_metrics = trial.user_attrs.copy()
 
         # Print compact trial summary
         if trial.value is not None:
@@ -67,10 +70,22 @@ class ProgressCallback:
             param_str = ' | '.join([f"{k}={trial.params[k]}" for k in key_params if k in trial.params])
             print(f"Params: {param_str}")
 
-            # Show best so far
+            # Show best so far with all metrics
             if self.best_trial is not None:
                 improvement = "✓" if trial.number == self.best_trial else " "
-                print(f"Best so far: Trial {self.best_trial} | {self.objective}: {self.best_value:.6f} {improvement}")
+                print(f"\nBest so far: Trial {self.best_trial} {improvement}")
+                print(f"  Primary: {self.objective}: {self.best_value:.6f}")
+
+                # Display all metrics for the best trial
+                if self.best_trial_metrics:
+                    metric_order = ['ECE', 'BMSE', 'DR_Bias', 'DR_Variance', 'MSE', 'AUC', 'NDCG@5', 'training_time']
+                    for metric_name in metric_order:
+                        if metric_name in self.best_trial_metrics:
+                            value = self.best_trial_metrics[metric_name]
+                            if isinstance(value, float):
+                                print(f"  {metric_name}: {value:.6f}")
+                            else:
+                                print(f"  {metric_name}: {value}")
             print(f"{'='*80}")
         else:
             print(f"\nTrial {trial.number}/{self.n_trials} FAILED")

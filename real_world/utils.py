@@ -268,6 +268,10 @@ def ndcg_func(model, x_te, y_te, top_k_list = [5, 10]):
         y_u = y_te[u_idx]
         pred_u = model.predict(x_u)
 
+        # Handle GPU tensors
+        if torch.is_tensor(pred_u):
+            pred_u = pred_u.cpu().numpy()
+
         for top_k in top_k_list:
             # Handle case where user has fewer items than top_k
             actual_k = min(top_k, len(pred_u))
@@ -303,6 +307,10 @@ def recall_func(model, x_te, y_te, top_k_list = [5, 10]):
         x_u = x_te[u_idx]
         y_u = y_te[u_idx]
         pred_u = model.predict(x_u)
+
+        # Handle GPU tensors
+        if torch.is_tensor(pred_u):
+            pred_u = pred_u.cpu().numpy()
 #         print(len(pred_u))
         for top_k in top_k_list:
             pred_top_k = np.argsort(-pred_u)[:top_k]
@@ -337,6 +345,10 @@ def precision_func(model, x_te, y_te, top_k_list = [5, 10]):
         x_u = x_te[u_idx]
         y_u = y_te[u_idx]
         pred_u = model.predict(x_u)
+
+        # Handle GPU tensors
+        if torch.is_tensor(pred_u):
+            pred_u = pred_u.cpu().numpy()
 #         print(len(pred_u))
         for top_k in top_k_list:
             pred_top_k = np.argsort(-pred_u)[:top_k]

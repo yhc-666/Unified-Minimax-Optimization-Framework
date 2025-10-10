@@ -310,7 +310,7 @@ class MF_BaseModel(nn.Module):
 
     def predict(self, x):
         pred = self.forward(x)
-        return pred.detach().cpu()
+        return pred.detach()  # Stay on GPU during training
 
     def to(self, device):
         """Override to() to update self.device attribute"""
@@ -380,7 +380,7 @@ class NCF_BaseModel(nn.Module):
 
     def predict(self, x):
         pred = self.forward(x)
-        return pred.detach().cpu()
+        return pred.detach()  # Stay on GPU during training
 
     def to(self, device):
         """Override to() to update self.device attribute"""
@@ -481,13 +481,14 @@ class MF_DR(nn.Module):
 
             epoch_loss = 0
 
-            for idx in range(total_batch):
+            batch_pbar = tqdm(range(total_batch), desc=f"  Epoch {epoch+1}/{num_epoch}", leave=False, disable=not verbose)
+            for idx in batch_pbar:
                 # mini-batch training
                 x_all_idx = ul_idxs[idx * self.batch_size_prop : (idx+1) * self.batch_size_prop]
-                
+
                 x_sampled = x_all[x_all_idx]
                 prop = self.propensity_model.forward(x_sampled)
-                
+
                 sub_obs = obs[x_all_idx]
                 sub_obs = torch.Tensor(sub_obs).to(self.device)
 
@@ -495,8 +496,11 @@ class MF_DR(nn.Module):
                 optimizer_propensity.zero_grad()
                 prop_loss.backward()
                 optimizer_propensity.step()
-                
+
                 epoch_loss += prop_loss.detach().cpu().numpy()
+
+                # Update batch progress bar with running loss
+                batch_pbar.set_postfix({'loss': f'{epoch_loss/(idx+1):.4f}'})
 
             pbar.set_postfix({'loss': epoch_loss})
             
@@ -638,7 +642,8 @@ class MF_DR_JL(nn.Module):
 
             epoch_loss = 0
 
-            for idx in range(total_batch):
+            batch_pbar = tqdm(range(total_batch), desc=f"  Epoch {epoch+1}/{num_epoch}", leave=False, disable=not verbose)
+            for idx in batch_pbar:
                 # mini-batch training
                 x_all_idx = ul_idxs[idx * self.batch_size_prop : (idx+1) * self.batch_size_prop]
                 
@@ -652,11 +657,15 @@ class MF_DR_JL(nn.Module):
                 optimizer_propensity.zero_grad()
                 prop_loss.backward()
                 optimizer_propensity.step()
-                
+
                 epoch_loss += prop_loss.detach().cpu().numpy()
 
+                # Update batch progress bar
+                batch_pbar.set_postfix({'loss': f'{epoch_loss/(idx+1):.4f}'})
+
+            # Update epoch progress bar
             pbar.set_postfix({'loss': epoch_loss})
-            
+
             relative_loss_div = (last_loss-epoch_loss)/(last_loss+1e-10)
             if  relative_loss_div < tol:
                 if early_stop > 5:
@@ -713,12 +722,12 @@ class MF_DR_JL(nn.Module):
 
                         
                 pred = self.prediction_model.forward(sub_x)
-                imputation_y = self.imputation_model.predict(sub_x).to(self.device)                
+                imputation_y = self.imputation_model.predict(sub_x)                
                 
                 x_sampled = x_all[ul_idxs[G*idx* self.batch_size : G*(idx+1)*self.batch_size]]
                                        
                 pred_u = self.prediction_model.forward(x_sampled) 
-                imputation_y1 = self.imputation_model.predict(x_sampled).to(self.device)
+                imputation_y1 = self.imputation_model.predict(x_sampled)
 
                 xent_loss = F.binary_cross_entropy(pred, sub_y, weight=inv_prop, reduction="sum") # o*eui/pui
                 imputation_loss = F.binary_cross_entropy(pred, imputation_y, reduction="sum")
@@ -737,7 +746,7 @@ class MF_DR_JL(nn.Module):
                                                            
                 epoch_loss += xent_loss.detach().cpu().numpy()                
 
-                pred = self.prediction_model.predict(sub_x).to(self.device)
+                pred = self.prediction_model.predict(sub_x)
                 imputation_y = self.imputation_model.forward(sub_x)
 
                 e_loss = F.binary_cross_entropy(pred, sub_y, reduction="none")
@@ -848,7 +857,8 @@ class MF_DR_DCE(nn.Module):
             epoch_ece = 0
             epoch_total_loss = 0
 
-            for idx in range(total_batch):
+            batch_pbar = tqdm(range(total_batch), desc=f"  Epoch {epoch+1}/{num_epoch}", leave=False, disable=not verbose)
+            for idx in batch_pbar:
                 # mini-batch training
                 x_all_idx = ul_idxs[idx * self.batch_size_prop : (idx+1) * self.batch_size_prop]
                 
@@ -870,11 +880,15 @@ class MF_DR_DCE(nn.Module):
                 optimizer_propensity.zero_grad()
                 prop_loss.backward()
                 optimizer_propensity.step()
-                
+
                 epoch_mse += mse_loss.detach().cpu().numpy()
                 epoch_ece += ece_loss.detach().cpu().numpy()
                 epoch_total_loss += prop_loss.detach().cpu().numpy()
 
+                # Update batch progress bar
+                batch_pbar.set_postfix({'loss': f'{epoch_total_loss/(idx+1):.4f}'})
+
+            # Update epoch progress bar
             pbar.set_postfix({'mse': epoch_mse, 'ece': epoch_ece, 'total': epoch_total_loss})
             
             # Early stopping based on combined loss
@@ -955,12 +969,12 @@ class MF_DR_DCE(nn.Module):
                 sub_y = torch.Tensor(sub_y).to(self.device)
                         
                 pred = self.prediction_model.forward(sub_x)
-                imputation_y = self.imputation_model.predict(sub_x).to(self.device)                
+                imputation_y = self.imputation_model.predict(sub_x)                
                 
                 x_sampled = x_all[ul_idxs[G*idx* self.batch_size : G*(idx+1)*self.batch_size]]
                                        
                 pred_u = self.prediction_model.forward(x_sampled) 
-                imputation_y1 = self.imputation_model.predict(x_sampled).to(self.device)
+                imputation_y1 = self.imputation_model.predict(x_sampled)
 
                 xent_loss = F.binary_cross_entropy(pred, sub_y, weight=inv_prop, reduction="sum")
                 imputation_loss = F.binary_cross_entropy(pred, imputation_y, reduction="sum")
@@ -979,7 +993,7 @@ class MF_DR_DCE(nn.Module):
                 epoch_loss += xent_loss.detach().cpu().numpy()                
 
                 # Update imputation model
-                pred = self.prediction_model.predict(sub_x).to(self.device)
+                pred = self.prediction_model.predict(sub_x)
                 imputation_y = self.imputation_model.forward(sub_x)
 
                 e_loss = F.binary_cross_entropy(pred, sub_y, reduction="none")
@@ -1102,12 +1116,12 @@ class MF_DR_BMSE(MF_DR_JL):
                 sub_y = torch.Tensor(sub_y).to(self.device)
                 
                 pred = self.prediction_model.forward(sub_x)
-                imputation_y = self.imputation_model.predict(sub_x).to(self.device)
+                imputation_y = self.imputation_model.predict(sub_x)
                 
                 x_sampled = x_all[ul_idxs[G*idx*self.batch_size : G*(idx+1)*self.batch_size]]
                 
                 pred_u = self.prediction_model.forward(x_sampled)
-                imputation_y1 = self.imputation_model.predict(x_sampled).to(self.device)
+                imputation_y1 = self.imputation_model.predict(x_sampled)
 
                 # Standard DR loss components
                 xent_loss = F.binary_cross_entropy(pred, sub_y, weight=inv_prop, reduction="sum")
@@ -1155,7 +1169,7 @@ class MF_DR_BMSE(MF_DR_JL):
                 epoch_loss += xent_loss.detach().cpu().numpy()
 
                 # Update imputation model (same as parent)
-                pred = self.prediction_model.predict(sub_x).to(self.device)
+                pred = self.prediction_model.predict(sub_x)
                 imputation_y = self.imputation_model.forward(sub_x)
 
                 e_loss = F.binary_cross_entropy(pred, sub_y, reduction="none")
@@ -1236,7 +1250,8 @@ class MF_MRDR_JL(nn.Module):
 
             epoch_loss = 0
 
-            for idx in range(total_batch):
+            batch_pbar = tqdm(range(total_batch), desc=f"  Epoch {epoch+1}/{num_epoch}", leave=False, disable=not verbose)
+            for idx in batch_pbar:
                 # mini-batch training
                 x_all_idx = ul_idxs[idx * self.batch_size_prop : (idx+1) * self.batch_size_prop]
                 
@@ -1251,8 +1266,14 @@ class MF_MRDR_JL(nn.Module):
                 optimizer_propensity.zero_grad()
                 prop_loss.backward()
                 optimizer_propensity.step()
-                
+
                 epoch_loss += prop_loss.detach().cpu().numpy()
+
+                # Update batch progress bar
+                batch_pbar.set_postfix({'loss': f'{epoch_loss/(idx+1):.4f}'})
+
+            # Update epoch progress bar
+            pbar.set_postfix({'loss': epoch_loss})
 
             relative_loss_div = (last_loss-epoch_loss)/(last_loss+1e-10)
             if  relative_loss_div < tol:
@@ -1462,12 +1483,12 @@ class MF_DR_BIAS(nn.Module):
 
                         
                 pred = self.prediction_model.forward(sub_x)
-                imputation_y = self.imputation.predict(sub_x).to(self.device)
+                imputation_y = self.imputation.predict(sub_x)
                 
                 x_sampled = x_all[ul_idxs[G*idx* self.batch_size : G*(idx+1)*self.batch_size]]
                                        
                 pred_u = self.prediction_model.forward(x_sampled) 
-                imputation_y1 = self.imputation.predict(x_sampled).to(self.device)
+                imputation_y1 = self.imputation.predict(x_sampled)
                 
                 xent_loss = F.binary_cross_entropy(pred, sub_y, weight=inv_prop, reduction="sum") # o*eui/pui
                 imputation_loss = F.binary_cross_entropy(pred, imputation_y, reduction="sum")                 
@@ -1488,7 +1509,7 @@ class MF_DR_BIAS(nn.Module):
 
                 epoch_loss += xent_loss.detach().cpu().numpy()                
 
-                pred = self.prediction_model.predict(sub_x).to(self.device)
+                pred = self.prediction_model.predict(sub_x)
                 imputation_y = self.imputation.forward(sub_x)                
                 
                 e_loss = F.binary_cross_entropy(pred, sub_y, reduction="none")
@@ -1547,7 +1568,8 @@ class MF_DR_BIAS(nn.Module):
 
             epoch_loss = 0
 
-            for idx in range(total_batch):
+            batch_pbar = tqdm(range(total_batch), desc=f"  Epoch {epoch+1}/{num_epoch}", leave=False, disable=not verbose)
+            for idx in batch_pbar:
                 # mini-batch training
                 x_all_idx = ul_idxs[idx * self.batch_size_prop : (idx+1) * self.batch_size_prop]
                 
@@ -1561,11 +1583,15 @@ class MF_DR_BIAS(nn.Module):
                 optimizer_propensity.zero_grad()
                 prop_loss.backward()
                 optimizer_propensity.step()
-                
+
                 epoch_loss += prop_loss.detach().cpu().numpy()
 
+                # Update batch progress bar
+                batch_pbar.set_postfix({'loss': f'{epoch_loss/(idx+1):.4f}'})
+
+            # Update epoch progress bar
             pbar.set_postfix({'loss': epoch_loss})
-            
+
             relative_loss_div = (last_loss-epoch_loss)/(last_loss+1e-10)
             if  relative_loss_div < tol:
                 if early_stop > 5:
@@ -1913,27 +1939,35 @@ class MF_Minimax(nn.Module):
         early_stop = 0
         stop = 5  # Default stop value
 
-        for epoch in tqdm(range(num_epoch), desc="Computing IPS", disable=not verbose):
+        pbar = tqdm(range(num_epoch), desc="Computing IPS", disable=not verbose)
+        for epoch in pbar:
             ul_idxs = np.arange(x_all.shape[0])
             np.random.shuffle(ul_idxs)
 
             epoch_loss = 0
-            for idx in range(total_batch):
+            batch_pbar = tqdm(range(total_batch), desc=f"  Epoch {epoch+1}/{num_epoch}", leave=False, disable=not verbose)
+            for idx in batch_pbar:
                 x_all_idx = ul_idxs[idx*self.batch_size_prop: (idx+1)*self.batch_size_prop]
-                
+
                 x_sampled = x_all[x_all_idx]
                 prop = self.model_prop(torch.LongTensor(x_sampled).to(self.device))
 
                 sub_obs = obs[x_all_idx]
                 sub_obs = torch.Tensor(sub_obs).to(self.device)
-                
+
                 prop_loss = F.mse_loss(prop, sub_obs)
-                
+
                 optimizer_propensity.zero_grad()
                 prop_loss.backward()
                 optimizer_propensity.step()
-                
+
                 epoch_loss += prop_loss.detach().cpu().numpy()
+
+                # Update batch progress bar with running loss
+                batch_pbar.set_postfix({'loss': f'{epoch_loss/(idx+1):.4f}'})
+
+            # Update epoch progress bar
+            pbar.set_postfix({'loss': epoch_loss})
 
             relative_loss_div = (last_loss - epoch_loss) / (last_loss + 1e-12)
             if  relative_loss_div < tol:
@@ -1943,9 +1977,9 @@ class MF_Minimax(nn.Module):
                     return epoch
                 else:
                     early_stop += 1
-                    
+
             last_loss = epoch_loss
-            
+
             if epoch % 10 == 0 and verbose:
                 print("[Minimax-PS] epoch:{}, xent:{}".format(epoch, epoch_loss))
             
@@ -2330,12 +2364,14 @@ class MF_Minimax_EqualWidth(nn.Module):
         early_stop = 0
         stop = 5
 
-        for epoch in tqdm(range(num_epoch), desc="Computing IPS (EqualWidth)", disable=not verbose):
+        pbar = tqdm(range(num_epoch), desc="Computing IPS (EqualWidth)", disable=not verbose)
+        for epoch in pbar:
             ul_idxs = np.arange(x_all.shape[0])
             np.random.shuffle(ul_idxs)
 
             epoch_loss = 0
-            for idx in range(total_batch):
+            batch_pbar = tqdm(range(total_batch), desc=f"  Epoch {epoch+1}/{num_epoch}", leave=False, disable=not verbose)
+            for idx in batch_pbar:
                 x_all_idx = ul_idxs[idx*self.batch_size_prop: (idx+1)*self.batch_size_prop]
 
                 x_sampled = x_all[x_all_idx]
@@ -2351,6 +2387,12 @@ class MF_Minimax_EqualWidth(nn.Module):
                 optimizer_propensity.step()
 
                 epoch_loss += prop_loss.detach().cpu().numpy()
+
+                # Update batch progress bar with running loss
+                batch_pbar.set_postfix({'loss': f'{epoch_loss/(idx+1):.4f}'})
+
+            # Update epoch progress bar
+            pbar.set_postfix({'loss': epoch_loss})
 
             relative_loss_div = (last_loss - epoch_loss) / (last_loss + 1e-12)
             if  relative_loss_div < tol:
@@ -2663,42 +2705,50 @@ class MF_MinimaxV2(nn.Module):
     # 原来lamb=0
     def _compute_IPS(self, x, num_epoch=1000, lr=0.05, lamb=1e-5, tol=1e-4, verbose=False):
         print('Stage1: computing_IPS', lr, lamb)
-        
+
         # Generate obs from x
-        obs = sps.csr_matrix((np.ones(x.shape[0]), (x[:, 0], x[:, 1])), 
+        obs = sps.csr_matrix((np.ones(x.shape[0]), (x[:, 0], x[:, 1])),
                             shape=(self.num_users, self.num_items), dtype=np.float32).toarray().reshape(-1)
-        
+
         optimizer_propensity = torch.optim.Adam(self.model_prop.parameters(), lr=lr, weight_decay=lamb)
-        
+
         num_samples = len(obs)
         total_batch = num_samples // self.batch_size_prop
         x_all = generate_total_sample(self.num_users, self.num_items)
-        
+
         last_loss = 1e9
         early_stop = 0
         stop = 5  # Default stop value
 
-        for epoch in tqdm(range(num_epoch), desc="Computing IPS", disable=not verbose):
+        pbar = tqdm(range(num_epoch), desc="Computing IPS", disable=not verbose)
+        for epoch in pbar:
             ul_idxs = np.arange(x_all.shape[0])
             np.random.shuffle(ul_idxs)
 
             epoch_loss = 0
-            for idx in range(total_batch):
+            batch_pbar = tqdm(range(total_batch), desc=f"  Epoch {epoch+1}/{num_epoch}", leave=False, disable=not verbose)
+            for idx in batch_pbar:
                 x_all_idx = ul_idxs[idx*self.batch_size_prop: (idx+1)*self.batch_size_prop]
-                
+
                 x_sampled = x_all[x_all_idx]
                 prop = self.model_prop(torch.LongTensor(x_sampled).to(self.device))
 
                 sub_obs = obs[x_all_idx]
                 sub_obs = torch.Tensor(sub_obs).to(self.device)
-                
+
                 prop_loss = F.mse_loss(prop, sub_obs)
-                
+
                 optimizer_propensity.zero_grad()
                 prop_loss.backward()
                 optimizer_propensity.step()
-                
+
                 epoch_loss += prop_loss.detach().cpu().numpy()
+
+                # Update batch progress bar with running loss
+                batch_pbar.set_postfix({'loss': f'{epoch_loss/(idx+1):.4f}'})
+
+            # Update epoch progress bar
+            pbar.set_postfix({'loss': epoch_loss})
 
             relative_loss_div = (last_loss - epoch_loss) / (last_loss + 1e-12)
             if  relative_loss_div < tol:
@@ -2708,12 +2758,12 @@ class MF_MinimaxV2(nn.Module):
                     return epoch
                 else:
                     early_stop += 1
-                    
+
             last_loss = epoch_loss
-            
+
             if epoch % 10 == 0 and verbose:
                 print("[MinimaxV2-PS] epoch:{}, xent:{}".format(epoch, epoch_loss))
-            
+
         return epoch
 
     def fit(self, x, y, x_test=None, y_test=None, G=4, alpha=1, beta=1, theta=1, num_epoch=1000, 
@@ -3084,10 +3134,11 @@ class MF_DR_JL_CE(nn.Module):
             np.random.shuffle(ul_idxs)
 
             epoch_loss = 0
-            for idx in range(total_batch):
+            batch_pbar = tqdm(range(total_batch), desc=f"  Epoch {epoch+1}/{num_epoch}", leave=False, disable=not verbose)
+            for idx in batch_pbar:
                 # mini-batch training
                 x_all_idx = ul_idxs[idx * self.batch_size_prop : (idx+1) * self.batch_size_prop]
-                
+
                 x_sampled = x_all[x_all_idx]
                 prop = self.propensity_model.forward(x_sampled)
                 sub_obs = obs[x_all_idx]
@@ -3097,8 +3148,11 @@ class MF_DR_JL_CE(nn.Module):
                 optimizer_propensity.zero_grad()
                 prop_loss.backward()
                 optimizer_propensity.step()
-                
+
                 epoch_loss += prop_loss.detach().cpu().numpy()
+
+                # Update batch progress bar with running loss
+                batch_pbar.set_postfix({'loss': f'{epoch_loss/(idx+1):.4f}'})
 
             pbar.set_postfix({'loss': epoch_loss})
             
@@ -3255,7 +3309,7 @@ class MF_DR_JL_CE(nn.Module):
                 ## imputation model update (O)
                 self.prediction_model.eval()
                 self.imputation_model.train()
-                pred = self.prediction_model.predict(sub_x).to(self.device) ## prediction: y_hat
+                pred = self.prediction_model.predict(sub_x) ## prediction: y_hat
                 imputation_y = self.imputation_model.forward(sub_x) ## pseudo label: y_tilde
                 
                 e_loss = F.binary_cross_entropy(pred, sub_y, reduction="none") ## actual loss: e
@@ -3870,36 +3924,44 @@ class MF_MinimaxV3(nn.Module):
         last_loss = 1e9
         early_stop = 0
         
-        for epoch in tqdm(range(num_epoch), desc='Stage1: computing_IPS'):
+        pbar = tqdm(range(num_epoch), desc='Stage1: computing_IPS', disable=not verbose)
+        for epoch in pbar:
             # Sampling all samples
             ul_idxs = np.arange(x_all.shape[0])
             np.random.shuffle(ul_idxs)
-            
+
             epoch_loss = 0
-            
-            for idx in range(total_batch):
+
+            batch_pbar = tqdm(range(total_batch), desc=f"  Epoch {epoch+1}/{num_epoch}", leave=False, disable=not verbose)
+            for idx in batch_pbar:
                 # Mini-batch training
                 x_all_idx = ul_idxs[idx * self.batch_size_prop : (idx+1) * self.batch_size_prop]
                 x_sampled = x_all[x_all_idx]
-                
+
                 # Propensity prediction
                 prop = self.model_prop.forward(x_sampled)
-                
+
                 # Get observed labels
                 sub_obs = obs[x_all_idx]
                 sub_obs = torch.Tensor(sub_obs).to(self.device)
-                
+
                 # MSE loss for propensity
                 prop_loss = nn.MSELoss()(prop, sub_obs)
-                
+
                 optimizer_propensity.zero_grad()
                 prop_loss.backward()
                 # Gradient clipping
                 torch.nn.utils.clip_grad_norm_(self.model_prop.parameters(), max_norm=1.0)
                 optimizer_propensity.step()
-                
+
                 epoch_loss += prop_loss.detach().cpu().numpy()
-            
+
+                # Update batch progress bar with running loss
+                batch_pbar.set_postfix({'loss': f'{epoch_loss/(idx+1):.4f}'})
+
+            # Update epoch progress bar
+            pbar.set_postfix({'loss': epoch_loss})
+
             # Learning rate scheduling
             scheduler_prop.step(epoch_loss)
             
@@ -4261,36 +4323,44 @@ class MF_MinimaxV4(nn.Module):
         last_loss = 1e9
         early_stop = 0
         
-        for epoch in tqdm(range(num_epoch), desc='Stage1: computing_IPS'):
+        pbar = tqdm(range(num_epoch), desc='Stage1: computing_IPS', disable=not verbose)
+        for epoch in pbar:
             # Sampling all samples
             ul_idxs = np.arange(x_all.shape[0])
             np.random.shuffle(ul_idxs)
-            
+
             epoch_loss = 0
-            
-            for idx in range(total_batch):
+
+            batch_pbar = tqdm(range(total_batch), desc=f"  Epoch {epoch+1}/{num_epoch}", leave=False, disable=not verbose)
+            for idx in batch_pbar:
                 # Mini-batch training
                 x_all_idx = ul_idxs[idx * self.batch_size_prop : (idx+1) * self.batch_size_prop]
                 x_sampled = x_all[x_all_idx]
-                
+
                 # Propensity prediction - use standard forward (no is_training parameter)
                 prop = self.model_prop(torch.LongTensor(x_sampled).to(self.device))
-                
+
                 # Get observed labels
                 sub_obs = obs[x_all_idx]
                 sub_obs = torch.Tensor(sub_obs).to(self.device)
-                
+
                 # MSE loss for propensity
                 prop_loss = F.mse_loss(prop, sub_obs)
-                
+
                 optimizer_propensity.zero_grad()
                 prop_loss.backward()
                 # Gradient clipping (from V3)
                 torch.nn.utils.clip_grad_norm_(self.model_prop.parameters(), max_norm=1.0)
                 optimizer_propensity.step()
-                
+
                 epoch_loss += prop_loss.detach().cpu().numpy()
-            
+
+                # Update batch progress bar with running loss
+                batch_pbar.set_postfix({'loss': f'{epoch_loss/(idx+1):.4f}'})
+
+            # Update epoch progress bar
+            pbar.set_postfix({'loss': epoch_loss})
+
             # Learning rate scheduling (from V3)
             scheduler_prop.step(epoch_loss)
             

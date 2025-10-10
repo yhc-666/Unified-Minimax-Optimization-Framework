@@ -493,8 +493,10 @@ def train_and_evaluate_model(model_name: str, data_splits: Dict, args, device=No
     p_test = data_splits['p_test']
     
     y_pred = model.predict(x_test)
-    if not isinstance(y_pred, np.ndarray):
-        y_pred = y_pred.numpy()
+    if torch.is_tensor(y_pred):
+        y_pred = y_pred.cpu().numpy()  # Handle GPU tensors
+    elif not isinstance(y_pred, np.ndarray):
+        y_pred = np.array(y_pred)
     
     # Get propensity scores from model
     hat_p_test = get_model_propensity_scores(model, model_name, x_test, device)
