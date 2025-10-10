@@ -76,7 +76,8 @@ def create_trial_params(trial: optuna.Trial, model_name: str, args) -> Dict[str,
         'seed': args.seed,
         'save_results': None,  # Don't save individual results during optimization
         'data_dir': args.data_dir,
-        'propensity_p': args.propensity_p
+        'propensity_p': args.propensity_p,
+        'device': args.device  # Pass device to train_and_evaluate_model
     }
     
     # Model-specific parameters
@@ -120,7 +121,7 @@ def objective(trial: optuna.Trial, args, data_splits: Dict) -> float:
     try:
         # Train and evaluate model
         start_time = time.time()
-        model, predictions, metrics = train_and_evaluate_model(args.model, data_splits, trial_args)
+        model, predictions, metrics = train_and_evaluate_model(args.model, data_splits, trial_args, device=trial_args.device)
         training_time = time.time() - start_time
         
         # Get the objective metric
@@ -272,7 +273,9 @@ def parse_args():
                        help='Data directory (e.g., "data", "data_ncf", "data_vaecf")')
     parser.add_argument('--propensity_p', type=float, default=0.6,
                        help='Propensity parameter (0.5 or 0.6)')
-    
+    parser.add_argument('--device', type=str, default=None,
+                       help='Device to use (e.g., "cpu", "cuda", "cuda:0", "cuda:1"). Auto-detect if not specified.')
+
     # Output settings
     parser.add_argument('--save_all_trials', action='store_true',
                        help='Save all trial results to CSV')

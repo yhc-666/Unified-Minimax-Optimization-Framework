@@ -171,6 +171,41 @@ def get_phi_normalized(model, x, device='cuda'):
 
 # ------------ Util functions ends ------------
 
+def validate_device(device_str: str) -> torch.device:
+    """Validate and return a torch device.
+
+    Args:
+        device_str: Device string like 'cpu', 'cuda', 'cuda:0', 'cuda:1', etc.
+                   If None, auto-detect (cuda if available, else cpu)
+
+    Returns:
+        torch.device object
+
+    Raises:
+        ValueError: If the specified device is not available
+    """
+    if device_str is None:
+        # Auto-detect (backward compatible behavior)
+        return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    device = torch.device(device_str)
+
+    # Validate CUDA devices
+    if device.type == 'cuda':
+        if not torch.cuda.is_available():
+            raise ValueError(f"CUDA is not available on this system")
+
+        # Check specific GPU index if provided
+        if device.index is not None:
+            if device.index >= torch.cuda.device_count():
+                raise ValueError(
+                    f"GPU {device.index} not available. "
+                    f"System has {torch.cuda.device_count()} GPU(s)"
+                )
+
+    return device
+
+
 def load_data(data_dir: str = "data", p: float = 0.6, verbose: bool = True) -> Tuple[np.ndarray, np.ndarray, int, int]:
     """Load ground truth data and compute propensity scores.
 
@@ -303,13 +338,20 @@ def get_model_propensity_scores(model, model_name: str, x_test: np.ndarray, devi
         return prop_scores.cpu().numpy()
 
 
-def train_and_evaluate_model(model_name: str, data_splits: Dict, args) -> Tuple[nn.Module, np.ndarray, Dict]:
-    """Train a model and return it with predictions and metrics."""
-    
+def train_and_evaluate_model(model_name: str, data_splits: Dict, args, device=None) -> Tuple[nn.Module, np.ndarray, Dict]:
+    """Train a model and return it with predictions and metrics.
+
+    Args:
+        model_name: Name of the model to train
+        data_splits: Dictionary containing train/test data
+        args: Arguments object with hyperparameters
+        device: torch.device or device string (e.g., 'cuda:0', 'cpu'). If None, auto-detect.
+    """
+
     print(f"\n{'='*60}")
     print(f"Training {model_name}")
     print(f"{'='*60}")
-    
+
     num_users = data_splits['num_users']
     num_items = data_splits['num_items']
     
@@ -366,8 +408,14 @@ def train_and_evaluate_model(model_name: str, data_splits: Dict, args) -> Tuple[
         )
     else:
         raise ValueError(f"Unknown model: {model_name}")
-    
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # Validate and set device
+    if isinstance(device, str):
+        device = validate_device(device)
+    elif device is None:
+        device = validate_device(None)  # Auto-detect
+    # else: device is already a torch.device object
+
     model.to(device)
     if args.verbose:
         print(f"Using device: {device}")
@@ -568,6 +616,8 @@ def main():
                        help='Data directory (e.g., "data", "data_ncf_p0.5", "data_vaecf_p0.5")')
     parser.add_argument('--propensity_p', type=float, default=0.6,
                        help='Propensity parameter (0.5 or 0.6)')
+    parser.add_argument('--device', type=str, default=None,
+                       help='Device to use (e.g., "cpu", "cuda", "cuda:0", "cuda:1"). Auto-detect if not specified.')
 
     args = parser.parse_args()
     
@@ -605,7 +655,7 @@ def main():
     # Train and evaluate models
     all_results = []
     for model_name in args.models:
-        model, predictions, metrics = train_and_evaluate_model(model_name, data_splits, args)
+        model, predictions, metrics = train_and_evaluate_model(model_name, data_splits, args, device=args.device)
         
         # Add hyperparameters to results
         metrics.update({
