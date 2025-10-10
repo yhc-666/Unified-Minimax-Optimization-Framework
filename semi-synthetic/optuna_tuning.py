@@ -66,7 +66,7 @@ class ProgressCallback:
             print(f"Trial {trial.number}/{self.n_trials} completed | {self.objective}: {trial.value:.6f}")
 
             # Show key hyperparameters
-            key_params = ['lr', 'embedding_k', 'gamma', 'G', 'beta', 'bmse_weight', 'ece_weight']
+            key_params = ['lr', 'prop_lr', 'batch_size', 'embedding_k', 'gamma', 'G', 'beta', 'bmse_weight', 'ece_weight']
             param_str = ' | '.join([f"{k}={trial.params[k]}" for k in key_params if k in trial.params])
             print(f"Params: {param_str}")
 
@@ -171,7 +171,7 @@ def objective(trial: optuna.Trial, args, data_splits: Dict) -> float:
     # Print trial start info
     print(f"\n{'='*80}")
     print(f"Starting Trial {trial.number}")
-    key_params = ['lr', 'embedding_k', 'gamma', 'G', 'beta', 'bmse_weight', 'ece_weight']
+    key_params = ['lr', 'prop_lr', 'batch_size', 'embedding_k', 'gamma', 'G', 'beta', 'bmse_weight', 'ece_weight']
     param_str = ' | '.join([f"{k}={trial_params[k]}" for k in key_params if k in trial_params])
     print(f"Testing: {param_str}")
     print(f"{'='*80}\n")

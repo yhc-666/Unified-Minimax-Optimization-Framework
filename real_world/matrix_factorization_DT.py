@@ -275,8 +275,14 @@ class MF_BaseModel(nn.Module):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     def forward(self, x, is_training=False):
-        user_idx = torch.LongTensor(x[:, 0]).to(self.device)
-        item_idx = torch.LongTensor(x[:, 1]).to(self.device)
+        # Handle both numpy arrays and tensors
+        if isinstance(x, np.ndarray):
+            x = torch.LongTensor(x).to(self.device)
+        elif not x.is_cuda and self.device.type == 'cuda':
+            x = x.to(self.device)
+
+        user_idx = x[:, 0]
+        item_idx = x[:, 1]
         U_emb = self.W(user_idx)
         V_emb = self.H(item_idx)
 
@@ -288,8 +294,14 @@ class MF_BaseModel(nn.Module):
             return out
 
     def forward_logit(self, x, is_training=False):
-        user_idx = torch.LongTensor(x[:, 0]).to(self.device)
-        item_idx = torch.LongTensor(x[:, 1]).to(self.device)
+        # Handle both numpy arrays and tensors
+        if isinstance(x, np.ndarray):
+            x = torch.LongTensor(x).to(self.device)
+        elif not x.is_cuda and self.device.type == 'cuda':
+            x = x.to(self.device)
+
+        user_idx = x[:, 0]
+        item_idx = x[:, 1]
         U_emb = self.W(user_idx)
         V_emb = self.H(item_idx)
 
@@ -301,8 +313,14 @@ class MF_BaseModel(nn.Module):
             return out
     
     def get_emb(self, x):
-        user_idx = torch.LongTensor(x[:, 0]).to(self.device)
-        item_idx = torch.LongTensor(x[:, 1]).to(self.device)
+        # Handle both numpy arrays and tensors
+        if isinstance(x, np.ndarray):
+            x = torch.LongTensor(x).to(self.device)
+        elif not x.is_cuda and self.device.type == 'cuda':
+            x = x.to(self.device)
+
+        user_idx = x[:, 0]
+        item_idx = x[:, 1]
         U_emb = self.W(user_idx)
         V_emb = self.H(item_idx)
 
@@ -322,7 +340,7 @@ class MF_BaseModel(nn.Module):
 class NCF_BaseModel(nn.Module):
     """The neural collaborative filtering method.
     """
-    
+
     def __init__(self, num_users, num_items, embedding_k=4, *args, **kwargs):
         super(NCF_BaseModel, self).__init__()
         self.num_users = num_users
@@ -339,8 +357,14 @@ class NCF_BaseModel(nn.Module):
 
 
     def forward(self, x, is_training=False):
-        user_idx = torch.LongTensor(x[:,0]).to(self.device)
-        item_idx = torch.LongTensor(x[:,1]).to(self.device)
+        # Handle both numpy arrays and tensors
+        if isinstance(x, np.ndarray):
+            x = torch.LongTensor(x).to(self.device)
+        elif not x.is_cuda and self.device.type == 'cuda':
+            x = x.to(self.device)
+
+        user_idx = x[:, 0]
+        item_idx = x[:, 1]
         U_emb = self.W(user_idx)
         V_emb = self.H(item_idx)
 
@@ -352,11 +376,17 @@ class NCF_BaseModel(nn.Module):
         if is_training:
             return torch.squeeze(out), U_emb, V_emb
         else:
-            return torch.squeeze(out)        
-    
+            return torch.squeeze(out)
+
     def forward_logit(self, x, is_training=False):
-        user_idx = torch.LongTensor(x[:, 0]).to(self.device)
-        item_idx = torch.LongTensor(x[:, 1]).to(self.device)
+        # Handle both numpy arrays and tensors
+        if isinstance(x, np.ndarray):
+            x = torch.LongTensor(x).to(self.device)
+        elif not x.is_cuda and self.device.type == 'cuda':
+            x = x.to(self.device)
+
+        user_idx = x[:, 0]
+        item_idx = x[:, 1]
         U_emb = self.W(user_idx)
         V_emb = self.H(item_idx)
 
@@ -369,10 +399,16 @@ class NCF_BaseModel(nn.Module):
             return torch.squeeze(out), U_emb, V_emb
         else:
             return torch.squeeze(out)
-    
+
     def get_emb(self, x):
-        user_idx = torch.LongTensor(x[:, 0]).to(self.device)
-        item_idx = torch.LongTensor(x[:, 1]).to(self.device)
+        # Handle both numpy arrays and tensors
+        if isinstance(x, np.ndarray):
+            x = torch.LongTensor(x).to(self.device)
+        elif not x.is_cuda and self.device.type == 'cuda':
+            x = x.to(self.device)
+
+        user_idx = x[:, 0]
+        item_idx = x[:, 1]
         U_emb = self.W(user_idx)
         V_emb = self.H(item_idx)
 
@@ -405,8 +441,14 @@ class Embedding_Sharing(nn.Module):
 
 
     def forward(self, x, is_training=False):
-        user_idx = torch.LongTensor(x[:,0]).to(self.device)
-        item_idx = torch.LongTensor(x[:,1]).to(self.device)
+        # Handle both numpy arrays and tensors
+        if isinstance(x, np.ndarray):
+            x = torch.LongTensor(x).to(self.device)
+        elif not x.is_cuda and self.device.type == 'cuda':
+            x = x.to(self.device)
+
+        user_idx = x[:, 0]
+        item_idx = x[:, 1]
         U_emb = self.W(user_idx)
         V_emb = self.H(item_idx)
 
