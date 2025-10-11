@@ -20,6 +20,8 @@ from typing import Dict, List, Tuple
 
 from dataset import load_data
 from matrix_factorization_DT import generate_total_sample, MF_Minimax, MF_Minimax_EqualWidth
+from matrix_factorization_DT import generate_total_sample, MF_Minimax_ablation as MF_Minimax, MF_Minimax_EqualWidth
+
 from utils import gini_index, ndcg_func, get_user_wise_ctr, rating_mat_to_sample, binarize, shuffle, minU, precision_func, recall_func
 
 mse_func = lambda x,y: np.mean((x-y)**2)

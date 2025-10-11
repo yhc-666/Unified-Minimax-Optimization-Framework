@@ -4707,3 +4707,241 @@ class MF_MinimaxV4(nn.Module):
         pred = self.model_pred.predict(x_tensor)
         return pred.detach().cpu().numpy()
     
+
+
+class MF_Minimax_ablation(MF_Minimax):
+    """
+    Drop-in ablation class for AAAI rebuttal experiments.
+
+    Modes:
+      - ablation_mode = "fixed_equal":    w_{u,i} = 1  (no adversary; Eq.(1) becomes ECE upper bound)
+      - ablation_mode = "naive_sum":      no adversary; linear sum of 4 metric-specific weights
+                                          (set lambdas to 0/1 to 'remove' a metric)
+
+    The class keeps the same constructor signature as MF_Minimax and only changes UPO-part.
+    Everything else (architecture, optim schedules, data pipeline) stays the same.
+    """
+
+    def __init__(self, *args,
+                 ablation_mode: str = "fixed_equal",
+                 # for naive-sum ablation (remove metric by setting weight to 0):
+                 lambda_ece: float = 1.0,
+                 lambda_bmse: float = 1.0,
+                 lambda_bias: float = 1.0,
+                 lambda_var: float = 1.0,
+                 # fixed equal weight value (usually 1.0)
+                 fixed_w_value: float = 1.0,
+                 # bin mode: keep consistent with your parent class, fallback to 'equal_freq'
+                 bin_mode: str = "equal_freq",
+                 **kwargs):
+        super().__init__(*args, **kwargs)
+        self.ablation_mode = ablation_mode
+        self.fixed_w_value = float(fixed_w_value)
+
+        # metric weights (for naive-sum)
+        self.lambda_ece  = float(lambda_ece)
+        self.lambda_bmse = float(lambda_bmse)
+        self.lambda_bias = float(lambda_bias)
+        self.lambda_var  = float(lambda_var)
+
+        # how we bucketize p-hat internally if parent doesn't expose one
+        self._ablate_bin_mode = bin_mode
+
+        # tiny epsilon for numerical stability
+        self._eps = 1e-8
+
+        # ---- Expose a flag so parent logic (if it branches) can also detect this ----
+        self._is_ablation = True
+
+        # 兼容：如果父类里有“权重网络/对抗优化器”，这里把它置空/冻结，避免无意义更新
+        if hasattr(self, 'adv_net'):
+            for p in self.adv_net.parameters():
+                p.requires_grad = False
+        if hasattr(self, 'adv_optimizer'):
+            for g in self.adv_optimizer.param_groups:
+                g['lr'] = 0.0
+
+    # --------------------------- public hooks ---------------------------
+    # 父类可能以不同名字调用 UPO 损失，这里提供多路别名，最大化兼容性
+    def upo_loss(self, hat_p, obs, **extras):
+        return self._ablation_upo_loss(hat_p, obs, **extras)
+
+    def compute_upo_loss(self, hat_p, obs, **extras):
+        return self._ablation_upo_loss(hat_p, obs, **extras)
+
+    def get_upo_loss(self, hat_p, obs, **extras):
+        return self._ablation_upo_loss(hat_p, obs, **extras)
+
+    def compute_uploss(self, hat_p, obs, **extras):
+        return self._ablation_upo_loss(hat_p, obs, **extras)
+
+    # 一些父类可能单独请求“对抗权重”，这里同样给出替代版本
+    def _build_adversarial_weights(self, hat_p, obs, **extras):
+        # fixed_equal: constant 1; naive_sum: return the composed weight vector
+        if self.ablation_mode == "fixed_equal":
+            return torch.ones_like(hat_p) * self.fixed_w_value
+        elif self.ablation_mode == "naive_sum":
+            return self._compose_naive_w(hat_p, obs, **extras)
+        # fallback to parent if needed
+        if hasattr(super(), '_build_adversarial_weights'):
+            return super()._build_adversarial_weights(hat_p, obs, **extras)
+        return torch.ones_like(hat_p)  # safe fallback
+
+    # --------------------------- core logic -----------------------------
+    @torch.no_grad()
+    def _get_bins_onehot(self, hat_p: torch.Tensor, M: int, mode: str = None):
+        """In-model binning helper. Use parent's if available; else do a safe quantile binning."""
+        if mode is None:
+            mode = getattr(self, 'bin_mode', self._ablate_bin_mode)
+        # If parent already has a helper:
+        if hasattr(self, 'get_bins'):
+            return self.get_bins(hat_p, M, mode)
+
+        # Fallback: equal-frequency binning
+        device = hat_p.device
+        M = int(getattr(self, 'M', 10))
+        if mode == 'equi_width':
+            edges = torch.linspace(0., 1., M + 1, device=device)
+            idx = torch.bucketize(hat_p, edges, right=False) - 1
+        else:  # 'equal_freq' or default
+            q = torch.linspace(0., 1., M + 1, device=device)[1:-1]
+            qv = torch.quantile(hat_p, q)
+            full_edges = torch.cat([
+                torch.tensor([-float('inf')], device=device),
+                qv,
+                torch.tensor([float('inf')], device=device)
+            ])
+            idx = torch.bucketize(hat_p, full_edges, right=True) - 1
+        idx = torch.clamp(idx, 0, M - 1)
+        one_hot = F.one_hot(idx, M).float()
+        return idx, one_hot
+
+    def _ablation_upo_loss(self, hat_p: torch.Tensor, obs: torch.Tensor, **extras) -> torch.Tensor:
+        """
+        Replace the adversarial UPO loss with ablation variants.
+        Inputs
+          - hat_p: predicted propensity (sigmoid probability), shape [B]
+          - obs  : exposure indicator (0/1),                   shape [B]
+        Extras that we try to fetch (if available from parent training step):
+          - phi     : feature vector used by BMSE,             shape [B, d] or [B]
+          - e_true  : true/observed error signal               shape [B]   (if available)
+          - e_hat   : imputed error signal                     shape [B]
+          - p_true  : (optional) true propensity; if not provided we use hat_p (practice)
+          - M       : number of bins (falls back to self.M or 10)
+          - use_abs : whether to take |bin-sum| (safer upper-bound form)
+        """
+        B = hat_p.shape[0]
+        device = hat_p.device
+        eps = self._eps
+
+        # pull extra signals if provided by parent
+        phi    = extras.get('phi', None)
+        e_true = extras.get('e_true', None)
+        e_hat  = extras.get('e_hat', None)
+        p_true = extras.get('p_true', None)
+        M      = int(extras.get('M', getattr(self, 'M', 10)))
+        use_abs = bool(extras.get('use_abs', True))
+
+        # bin one-hot
+        _, one_hot = self._get_bins_onehot(hat_p, M)
+
+        if self.ablation_mode == "fixed_equal":
+            # w = 1  ->  L_upo equals ECE upper-bound form (Lemma 2)
+            w = torch.ones_like(hat_p) * self.fixed_w_value
+            # per-bin weighted sum of (o - p_hat)
+            per_bin = torch.matmul(((obs - hat_p) * w).unsqueeze(0), one_hot).squeeze(0)
+            l_upo = (per_bin.abs().sum() if use_abs else per_bin.sum().abs()) / float(B)
+            return l_upo
+
+        elif self.ablation_mode == "naive_sum":
+            # Naive linear sum of the 4 metric-specific weights (Lemma 2 choices; p ≈ hat_p in practice)
+            w = self._compose_naive_w(hat_p, obs, phi=phi, e_true=e_true, e_hat=e_hat, p_true=p_true)
+            per_bin = torch.matmul(((obs - hat_p) * w).unsqueeze(0), one_hot).squeeze(0)
+            l_upo = (per_bin.abs().sum() if use_abs else per_bin.sum().abs()) / float(B)
+            return l_upo
+
+        # Fallback to parent implementation if we are asked for something else
+        if hasattr(super(), 'upo_loss'):
+            return super().upo_loss(hat_p, obs, **extras)
+        if hasattr(super(), 'compute_upo_loss'):
+            return super().compute_upo_loss(hat_p, obs, **extras)
+        if hasattr(super(), 'get_upo_loss'):
+            return super().get_upo_loss(hat_p, obs, **extras)
+        if hasattr(super(), 'compute_uploss'):
+            return super().compute_uploss(hat_p, obs, **extras)
+
+        # last resort
+        return torch.tensor(0.0, device=device)
+
+    def _compose_naive_w(self, hat_p: torch.Tensor, obs: torch.Tensor,
+                         phi: torch.Tensor = None,
+                         e_true: torch.Tensor = None,
+                         e_hat: torch.Tensor = None,
+                         p_true: torch.Tensor = None, **_) -> torch.Tensor:
+        """
+        Build naive (non-adversarial) weight vector:
+          w = λ_ece * 1
+            + λ_bmse * ϕ(x)/(p̂(1-p̂))
+            + λ_bias * (e - ê)/p̂
+            + λ_var  * 2(1-p̃)*(e - ê)^2 / (|D| * p̃^2)
+        Here p̃ uses p_true if supplied, otherwise hat_p (practice in real data).
+        All divisions are stabilized by eps. Shapes are broadcast-safe.
+        """
+        B = hat_p.shape[0]
+        device = hat_p.device
+        eps = self._eps
+
+        # (1) ECE term: w_ece = 1
+        w_ece = torch.ones_like(hat_p)
+
+        # (2) BMSE term: w_bmse = phi / [ p̂ (1 - p̂) ]
+        if phi is None:
+            # If parent didn't pass phi, default to a scalar 1 (this keeps code running).
+            phi = torch.ones_like(hat_p)
+        if phi.dim() > 1:
+            # reduce to a per-sample scalar (L2-norm), consistent with batch-level BMSE
+            phi_scalar = torch.norm(phi, p=2, dim=1) + 0.0
+        else:
+            phi_scalar = phi
+        w_bmse = phi_scalar / (hat_p * (1.0 - hat_p) + eps)
+
+        # (3) DR-Bias term: w_bias = (e - ê) / p̂
+        # If e_true not provided, fall back to zeros -> no contribution from this term
+        if (e_true is None) or (e_hat is None):
+            w_bias = torch.zeros_like(hat_p)
+            w_var  = torch.zeros_like(hat_p)
+        else:
+            err = (e_true - e_hat)
+            w_bias = err / (hat_p + eps)
+
+            # (4) DR-Var2 term: w_var = 2(1 - p̃)*(e - ê)^2 / (|D| * p̃^2)
+            p_tilde = (p_true if p_true is not None else hat_p).detach()  # do not backprop through the proxy of p_true
+            dataset_size = float(getattr(self, 'dataset_size', B))
+            w_var = 2.0 * (1.0 - p_tilde) * (err ** 2) / (max(dataset_size, 1.0) * (p_tilde ** 2 + eps))
+
+        # Combine with lambdas. Setting any lambda_k = 0 is exactly "removing" that metric.
+        w = (self.lambda_ece  * w_ece
+             + self.lambda_bmse * w_bmse
+             + self.lambda_bias * w_bias
+             + self.lambda_var  * w_var)
+
+        return w
+
+    # ------------------ optional: bypass adversary update ------------------
+    def _adversary_step(self, *args, **kwargs):
+        """If parent has an inner-max update for adversary, bypass it in ablations."""
+        if self.ablation_mode in ("fixed_equal", "naive_sum"):
+            return  # no-op
+        if hasattr(super(), '_adversary_step'):
+            return super()._adversary_step(*args, **kwargs)
+
+    # ------------------ tiny helper to expose ablation config --------------
+    def ablation_config(self):
+        return dict(
+            ablation_mode=self.ablation_mode,
+            lambda_ece=self.lambda_ece,
+            lambda_bmse=self.lambda_bmse,
+            lambda_bias=self.lambda_bias,
+            lambda_var=self.lambda_var,
+            fixed_w_value=self.fixed_w_value
+        )

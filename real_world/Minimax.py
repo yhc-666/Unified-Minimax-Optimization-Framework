@@ -11,7 +11,7 @@ from tqdm import tqdm
 import time
 
 from dataset import load_data
-from matrix_factorization_DT import generate_total_sample, MF_Minimax
+from matrix_factorization_DT import generate_total_sample, MF_Minimax, MF_Minimax_ablation
 from utils import gini_index, ndcg_func, get_user_wise_ctr, rating_mat_to_sample, binarize, shuffle, minU, precision_func, recall_func, set_all_seeds, set_deterministic
 
 mse_func = lambda x,y: np.mean((x-y)**2)
@@ -126,7 +126,7 @@ def train_and_eval(dataset_name, train_args, model_args, seed=2020):
     # Start timing for model initialization
     init_start_time = time.time()
     
-    mf = MF_Minimax(num_user, num_item, batch_size=train_args['batch_size'], batch_size_prop=train_args['batch_size_prop'],
+    mf = MF_Minimax_ablation(num_user, num_item, batch_size=train_args['batch_size'], batch_size_prop=train_args['batch_size_prop'],
                     embedding_k=model_args['embedding_k'], embedding_k1=model_args['embedding_k1'],
                     abc_model_name=model_args.get('abc_model_name', 'logistic_regression'),
                     copy_model_pred=model_args.get('copy_model_pred', 1),
