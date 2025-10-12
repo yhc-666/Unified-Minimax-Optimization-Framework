@@ -130,7 +130,8 @@ def train_and_eval(dataset_name, train_args, model_args, seed=2020):
                     embedding_k=model_args['embedding_k'], embedding_k1=model_args['embedding_k1'],
                     abc_model_name=model_args.get('abc_model_name', 'logistic_regression'),
                     copy_model_pred=model_args.get('copy_model_pred', 1),
-                    pred_model_name=model_args.get('pred_model_name', 'MF'))
+                    pred_model_name=model_args.get('pred_model_name', 'MF'),
+                    ablation_mode=train_args.get('ablation_mode', 'fixed_equal'))
     
     init_time = time.time() - init_start_time
     
@@ -240,30 +241,30 @@ def para(args):
     """Set hyperparameters for different datasets"""
     if args.dataset=="coat":
         args.train_args = {
-            "batch_size": 128,              # Mini-batch size for training prediction/imputation models
-            "batch_size_prop": 128,         # Mini-batch size for training propensity model
-            "gamma": 0.0174859545582588,                  # Propensity score clipping threshold (clips to [gamma, 1.0] to avoid extreme weights)
-            "G": 1,                         # Ratio of unobserved to observed samples (controls exploration in DR estimator)
-            "alpha": 0.5,                   # Unused in current implementation (kept for compatibility)
-            "beta": 0.5,                    # Weight for adversarial loss in propensity model training
-            "theta": 1,                     # Unused in current implementation (kept for compatibility)
-            "num_bins": 30                 # Number of bins for propensity score stratification
+            "batch_size": 256,
+            "batch_size_prop": 256,
+            "gamma": 0.0174859545582588,
+            "G": 1,
+            "alpha": 0.5,
+            "beta": 5,
+            "theta": 1,
+            "num_bins": 50,
+            "ablation_mode": "fixed_equal"  # Options: "fixed_equal", "naive_sum", or None (full adversarial)
         }
         args.model_args = {
-            "embedding_k": 32,               # Embedding dimension for propensity and discriminator models
-            "embedding_k1": 64,              # Embedding dimension for prediction and imputation models
-            "pred_lr": 0.05,               # Learning rate for prediction model
-            "impu_lr": 0.01,               # Learning rate for imputation model
-            "prop_lr": 0.05,               # Learning rate for propensity model during main training
-            "dis_lr": 0.01,                # Learning rate for discriminator model
-            "lamb_prop": 1e-3,              # Weight decay for propensity model during main training
-            "prop_lamb": 1e-3,              # Weight decay for propensity model during pre-training (_compute_IPS)
-            "lamb_pred": 0.005,              # Weight decay for prediction model
-            "lamb_imp": 0.0001,               # Weight decay for imputation model
-            "dis_lamb": 0.005,                # Weight decay for discriminator model
-            "abc_model_name": "logistic_regression",  # Architecture for adversarial discriminator ("logistic_regression" or "mlp")
-            "copy_model_pred": 1,            # Whether to initialize imputation model with prediction model weights (1=yes, 0=no)
-            "pred_model_name": "MF"         # Prediction/imputation model architecture ("MF", "NCF", or "VAECF")
+            "embedding_k": 16,               
+            "embedding_k1": 32,              
+            "pred_lr": 0.05,               
+            "impu_lr": 0.01,               
+            "prop_lr": 0.05,               
+            "dis_lr": 0.01,                
+            "lamb_prop": 1e-3,              
+            "prop_lamb": 1e-3,              
+            "lamb_pred": 0.005,              
+            "lamb_imp": 0.0005,               
+            "dis_lamb": 0.005,                
+            "abc_model_name": "logistic_regression",  
+            "copy_model_pred": 1            
         }
     elif args.dataset=="yahoo":
         args.train_args = {
@@ -274,7 +275,8 @@ def para(args):
             "alpha": 0.5,                   # Unused parameter
             "beta": 1,                   # Much smaller adversarial weight (yahoo needs less regularization)
             "theta": 1,                     # Unused parameter
-            "num_bins": 20                  # Same binning strategy
+            "num_bins": 20,                  # Same binning strategy
+            "ablation_mode": "fixed_equal"  # Options: "fixed_equal", "naive_sum", or None (full adversarial)
         }
         args.model_args = {
             "embedding_k": 32,              # Larger embeddings for larger dataset
@@ -301,7 +303,8 @@ def para(args):
             "alpha": 0.5,                   # Unused parameter
             "beta": 10,                   # Small adversarial weight like yahoo
             "theta": 1,                     # Unused parameter
-            "num_bins": 20                  # Standard binning
+            "num_bins": 20,                  # Standard binning
+            "ablation_mode": "naive_sum"  # Options: "fixed_equal", "naive_sum", or None (full adversarial)
         }
         args.model_args = {
             "embedding_k": 128,              # Larger embeddings for complex interactions
@@ -329,4 +332,4 @@ if __name__ == "__main__":
     train_and_eval(args.dataset, args.train_args, args.model_args, seed=args.seed)
 
 
-# python real_world/Minimax.py --dataset kuai
+# python real_world/Minimax.py --dataset coat
